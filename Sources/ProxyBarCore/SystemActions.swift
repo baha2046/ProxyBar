@@ -18,37 +18,34 @@ public struct SystemActions {
         }
     }
 
-    public let launchAgentLabel: String
     public let networkService: String
     public let pacURL: String
     private let commandRunner: CommandRunner
 
     public init(
-        launchAgentLabel: String = "com.ericchan.crabbyproxy",
         networkService: String = "Wi-Fi",
         pacURL: String = "http://127.0.0.1:1081/proxy.pac",
         commandRunner: @escaping CommandRunner = SystemActions.runProcess
     ) {
-        self.launchAgentLabel = launchAgentLabel
         self.networkService = networkService
         self.pacURL = pacURL
         self.commandRunner = commandRunner
     }
 
+    public init(
+        settings: ProxySettings,
+        networkService: String = "Wi-Fi",
+        commandRunner: @escaping CommandRunner = SystemActions.runProcess
+    ) {
+        self.init(networkService: networkService, pacURL: settings.pacURL, commandRunner: commandRunner)
+    }
+
     public func apply() throws {
-        try restartService()
         try refreshPAC()
     }
 
     public func restartService() throws {
-        try run(
-            executable: "/bin/launchctl",
-            arguments: [
-                "kickstart",
-                "-k",
-                "gui/\(getuid())/\(launchAgentLabel)"
-            ]
-        )
+        try apply()
     }
 
     public func refreshPAC() throws {

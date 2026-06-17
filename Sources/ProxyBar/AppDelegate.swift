@@ -5,7 +5,7 @@ import ProxyBarCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let configStore = ConfigStore()
-    private let systemActions = SystemActions()
+    private var proxyServer: EmbeddedProxyServer?
     private var statusMessage = "Ready"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -13,7 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ApplicationMenu.install()
         statusItem.button?.image = StatusIcon.make()
         statusItem.button?.toolTip = "ProxyBar"
+        startProxyServer()
         rebuildMenu()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        proxyServer?.stop()
     }
 
     @objc private func addDomain() {
@@ -77,12 +82,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func performChange(_ change: () throws -> Void) {
         do {
             try change()
-            try systemActions.apply()
+            try reloadProxyServer()
             statusMessage = "Applied at \(Self.shortTime())"
         } catch {
             statusMessage = error.localizedDescription
         }
         rebuildMenu()
+    }
+
+    private func startProxyServer() {
+        do {
+            let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
+            let server = EmbeddedProxyServer(settings: settings, enableWireGuardWatcher: true)
+            try server.start()
+            proxyServer = server
+            try SystemActions(settings: settings).apply()
+            statusMessage = "Proxy listening on SOCKS5 \(server.boundSOCKSPort), PAC \(server.boundPACPort)"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func reloadProxyServer() throws {
+        let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
+
+        if let proxyServer {
+            try proxyServer.reload(settings: settings)
+        } else {
+            let server = EmbeddedProxyServer(settings: settings, enableWireGuardWatcher: true)
+            try server.start()
+            proxyServer = server
+        }
+
+        try SystemActions(settings: settings).apply()
     }
 
     private func rebuildMenu() {

@@ -3,7 +3,7 @@ import ProxyBarCore
 
 @main
 struct ProxyBarCoreTests {
-    static func main() throws {
+    static func main() async throws {
         try testApexDomainExpandsToPair()
         try testWildcardDomainExpandsToPair()
         try testLocalhostRemainsExactOnly()
@@ -11,9 +11,17 @@ struct ProxyBarCoreTests {
         testDedupeAndSortKeepsUniqueDomains()
         try testInvalidInputIsRejected()
         try testExtractsDomains()
+        try testParsesProxySettings()
+        try testUsesCrabbyDefaultsWhenConfigIsMissing()
+        testGeneratesPACFromSettings()
         try testReplacesOnlyDomainBlock()
         try testMissingDomainBlockReportsError()
         try testRefreshPACUsesValidNetworksetupArguments()
+        try testApplyRefreshesPACWithoutLaunchctl()
+        try await testPACHTTPServerServesProxyPAC()
+        try testPACHTTPServerReportsOccupiedPort()
+        try testSOCKS5ServerRejectsNonSocksGreeting()
+        try await testEmbeddedProxyServerReloadsSettings()
         print("ProxyBarCoreTests passed")
     }
 
@@ -64,6 +72,37 @@ struct ProxyBarCoreTests {
             "*.reddit.com",
             "reddit.com"
         ])
+    }
+
+    private static func testParsesProxySettings() throws {
+        let settings = try CrabbyProxyConfigParser.parse(sampleConfig)
+        expectEqual(settings.socksPort, 1080)
+        expectEqual(settings.pacPort, 1081)
+        expectEqual(settings.dohServers, ["https://1.1.1.1/dns-query"])
+        expectEqual(settings.domains, [
+            "*.youtube.com",
+            "youtube.com",
+            "*.reddit.com",
+            "reddit.com"
+        ])
+    }
+
+    private static func testUsesCrabbyDefaultsWhenConfigIsMissing() throws {
+        let settings = CrabbyProxyConfigParser.load(from: URL(fileURLWithPath: "/tmp/proxybar-missing-config-\(UUID().uuidString).toml"))
+        expectEqual(settings.socksPort, 1080)
+        expectEqual(settings.pacPort, 1081)
+        expect(settings.dohServers.contains("https://1.1.1.1/dns-query"), "Expected Cloudflare DoH default")
+        expect(settings.domains.contains("youtube.com"), "Expected crabbyproxy default domains")
+    }
+
+    private static func testGeneratesPACFromSettings() {
+        let pac = PACGenerator.generate(domains: ["*.example.com", "example.com"], socksPort: 1088)
+        expect(pac.contains(#"shExpMatch(host, "*.example.com")"#), "Expected wildcard condition")
+        expect(pac.contains(#"return "SOCKS5 127.0.0.1:1088";"#), "Expected SOCKS5 return")
+        expect(pac.contains(#"return "DIRECT";"#), "Expected DIRECT fallback")
+
+        let direct = PACGenerator.generate(domains: [], socksPort: 1088)
+        expect(!direct.contains("SOCKS5"), "Expected empty domains to render DIRECT-only PAC")
     }
 
     private static func testReplacesOnlyDomainBlock() throws {
@@ -117,6 +156,90 @@ struct ProxyBarCoreTests {
         ])
     }
 
+    private static func testApplyRefreshesPACWithoutLaunchctl() throws {
+        var commands: [RecordedCommand] = []
+        let actions = SystemActions(settings: .init(socksPort: 1080, pacPort: 1099, domains: [], dohServers: [])) { executable, arguments in
+            commands.append(RecordedCommand(executable: executable, arguments: arguments))
+            return ""
+        }
+
+        try actions.apply()
+
+        expectEqual(commands, [
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Wi-Fi", "off"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxyurl", "Wi-Fi", "http://127.0.0.1:1099/proxy.pac"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Wi-Fi", "on"]
+            )
+        ])
+    }
+
+    private static func testPACHTTPServerServesProxyPAC() async throws {
+        let server = PACHTTPServer(content: "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n", port: 0)
+        try server.start()
+        defer { server.stop() }
+
+        let url = URL(string: "http://127.0.0.1:\(server.boundPort)/proxy.pac")!
+        let (data, response) = try await URLSession.shared.data(from: url)
+        let http = response as? HTTPURLResponse
+        expectEqual(http?.statusCode, 200)
+        expectEqual(String(data: data, encoding: .utf8), "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n")
+    }
+
+    private static func testPACHTTPServerReportsOccupiedPort() throws {
+        let first = PACHTTPServer(content: "one", port: 0)
+        try first.start()
+        defer { first.stop() }
+
+        let second = PACHTTPServer(content: "two", port: first.boundPort)
+        do {
+            try second.start()
+            second.stop()
+            throw TestFailure("Expected occupied PAC port to throw")
+        } catch is POSIXError {
+        }
+    }
+
+    private static func testSOCKS5ServerRejectsNonSocksGreeting() throws {
+        let server = SOCKS5Server(settings: .init(socksPort: 0, pacPort: 0, domains: [], dohServers: []))
+        try server.start()
+        defer { server.stop() }
+
+        let socket = try TestSocket.connect(port: server.boundPort)
+        defer { socket.close() }
+
+        try socket.write([0x04, 0x01, 0x00])
+        let response = try socket.read(maxBytes: 2)
+        expectEqual(response, [])
+    }
+
+    private static func testEmbeddedProxyServerReloadsSettings() async throws {
+        let server = EmbeddedProxyServer(settings: .init(socksPort: 0, pacPort: 0, domains: ["one.example"], dohServers: []))
+        try server.start()
+        defer { server.stop() }
+
+        let firstPAC = try await fetchPAC(port: server.boundPACPort)
+        expect(firstPAC.contains("one.example"), "Expected initial PAC content")
+
+        try server.reload(settings: .init(socksPort: 0, pacPort: server.boundPACPort, domains: ["two.example"], dohServers: []))
+        let secondPAC = try await fetchPAC(port: server.boundPACPort)
+        expect(secondPAC.contains("two.example"), "Expected reloaded PAC content")
+        expect(!secondPAC.contains("one.example"), "Expected old PAC content to be replaced")
+    }
+
+    private static func fetchPAC(port: UInt16) async throws -> String {
+        let url = URL(string: "http://127.0.0.1:\(port)/proxy.pac")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     private static func expect(_ condition: Bool, _ message: String) {
         if !condition {
             fatalError(message)
@@ -143,6 +266,60 @@ struct ProxyBarCoreTests {
 
         var description: String {
             ([executable] + arguments).joined(separator: " ")
+        }
+    }
+
+    private final class TestSocket {
+        private let descriptor: Int32
+
+        private init(descriptor: Int32) {
+            self.descriptor = descriptor
+        }
+
+        static func connect(port: UInt16) throws -> TestSocket {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+            let status = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard status == 0 else {
+                let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+                Darwin.close(fd)
+                throw error
+            }
+            return TestSocket(descriptor: fd)
+        }
+
+        func write(_ bytes: [UInt8]) throws {
+            guard Darwin.write(descriptor, bytes, bytes.count) == bytes.count else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+        }
+
+        func read(maxBytes: Int) throws -> [UInt8] {
+            var timeout = timeval(tv_sec: 1, tv_usec: 0)
+            setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            var buffer = [UInt8](repeating: 0, count: maxBytes)
+            let count = Darwin.read(descriptor, &buffer, maxBytes)
+            if count <= 0 {
+                return []
+            }
+            return Array(buffer.prefix(count))
+        }
+
+        func close() {
+            Darwin.close(descriptor)
         }
     }
 
