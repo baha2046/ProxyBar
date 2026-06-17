@@ -27,7 +27,12 @@ public final class SOCKS5Server: @unchecked Sendable {
             return
         }
 
-        let fd = try Self.makeListeningSocket(port: settings.socksPort)
+        let fd: Int32
+        do {
+            fd = try Self.makeListeningSocket(port: settings.socksPort)
+        } catch let error as POSIXError {
+            throw ProxyServerBindError(role: .socks5, port: settings.socksPort, code: error.code)
+        }
         socketDescriptor = fd
         boundPort = try Self.boundPort(for: fd)
         isRunning = true

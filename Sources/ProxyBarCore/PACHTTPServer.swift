@@ -32,7 +32,12 @@ public final class PACHTTPServer: @unchecked Sendable {
             return
         }
 
-        let fd = try Self.makeListeningSocket(port: requestedPort)
+        let fd: Int32
+        do {
+            fd = try Self.makeListeningSocket(port: requestedPort)
+        } catch let error as POSIXError {
+            throw ProxyServerBindError(role: .pac, port: requestedPort, code: error.code)
+        }
         socketDescriptor = fd
         boundPort = try Self.boundPort(for: fd)
         isRunning = true

@@ -18,8 +18,10 @@ struct ProxyBarCoreTests {
         try testMissingDomainBlockReportsError()
         try testRefreshPACUsesValidNetworksetupArguments()
         try testApplyRefreshesPACWithoutLaunchctl()
+        try testDisableAutoProxyUsesNetworksetup()
         try await testPACHTTPServerServesProxyPAC()
         try testPACHTTPServerReportsOccupiedPort()
+        try testSOCKS5ServerReportsOccupiedPort()
         try testSOCKS5ServerRejectsNonSocksGreeting()
         try testSOCKS5ServerHandlesFragmentedRequest()
         try await testEmbeddedProxyServerReloadsSettings()
@@ -182,6 +184,23 @@ struct ProxyBarCoreTests {
         ])
     }
 
+    private static func testDisableAutoProxyUsesNetworksetup() throws {
+        var commands: [RecordedCommand] = []
+        let actions = SystemActions(networkService: "Wi-Fi", pacURL: "http://127.0.0.1:1081/proxy.pac") { executable, arguments in
+            commands.append(RecordedCommand(executable: executable, arguments: arguments))
+            return ""
+        }
+
+        try actions.disableAutoProxy()
+
+        expectEqual(commands, [
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Wi-Fi", "off"]
+            )
+        ])
+    }
+
     private static func testPACHTTPServerServesProxyPAC() async throws {
         let server = PACHTTPServer(content: "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n", port: 0)
         try server.start()
@@ -204,7 +223,27 @@ struct ProxyBarCoreTests {
             try second.start()
             second.stop()
             throw TestFailure("Expected occupied PAC port to throw")
-        } catch is POSIXError {
+        } catch let error as ProxyServerBindError {
+            expectEqual(error.role, .pac)
+            expectEqual(error.port, first.boundPort)
+            expect(error.localizedDescription.contains("PAC port \(first.boundPort) is already in use"), "Expected PAC-specific busy port message")
+        }
+    }
+
+    private static func testSOCKS5ServerReportsOccupiedPort() throws {
+        let first = SOCKS5Server(settings: .init(socksPort: 0, pacPort: 0, domains: [], dohServers: []))
+        try first.start()
+        defer { first.stop() }
+
+        let second = SOCKS5Server(settings: .init(socksPort: first.boundPort, pacPort: 0, domains: [], dohServers: []))
+        do {
+            try second.start()
+            second.stop()
+            throw TestFailure("Expected occupied SOCKS5 port to throw")
+        } catch let error as ProxyServerBindError {
+            expectEqual(error.role, .socks5)
+            expectEqual(error.port, first.boundPort)
+            expect(error.localizedDescription.contains("SOCKS5 port \(first.boundPort) is already in use"), "Expected SOCKS5-specific busy port message")
         }
     }
 

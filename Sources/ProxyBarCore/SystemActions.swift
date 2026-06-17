@@ -63,6 +63,13 @@ public struct SystemActions {
         )
     }
 
+    public func disableAutoProxy() throws {
+        try run(
+            executable: "/usr/sbin/networksetup",
+            arguments: ["-setautoproxystate", networkService, "off"]
+        )
+    }
+
     @discardableResult
     private func run(executable: String, arguments: [String]) throws -> String {
         try commandRunner(executable, arguments)
