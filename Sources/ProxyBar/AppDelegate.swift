@@ -256,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .starting:
             return ProxyStatusViewModel(
                 title: "Starting ProxyBar",
-                detail: "Opening local proxy ports and applying PAC settings",
+                detail: "Opening local proxy ports and applying PAC",
                 status: status,
                 isOn: true,
                 socksPort: nil,

@@ -40,7 +40,7 @@ final class ProxyStatusViewController: NSViewController {
     private var isUpdatingSwitch = false
 
     override func loadView() {
-        preferredContentSize = NSSize(width: 390, height: 560)
+        preferredContentSize = NSSize(width: 390, height: 748)
         view = root
         view.translatesAutoresizingMaskIntoConstraints = false
         view.widthAnchor.constraint(equalToConstant: 390).isActive = true
@@ -52,9 +52,15 @@ final class ProxyStatusViewController: NSViewController {
 
         let stack = NSStackView(views: [header, stateBlock, activityView, cards, domainList, errorCard, actions])
         stack.orientation = .vertical
+        stack.distribution = .fill
         stack.spacing = 14
         stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 16, right: 18)
         stack.translatesAutoresizingMaskIntoConstraints = false
+
+        // Let the domain list absorb any leftover vertical space so the panel
+        // stays a fixed height regardless of how many domains are configured.
+        domainList.setContentHuggingPriority(.defaultLow, for: .vertical)
+        domainList.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
 
         view.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -184,7 +190,7 @@ final class ProxyStatusViewController: NSViewController {
         top.distribution = .fillEqually
         top.spacing = 8
 
-        let stack = NSStackView(views: [top, loginButton])
+        let stack = NSStackView(views: [loginButton, top])
         stack.orientation = .vertical
         stack.spacing = 10
         return stack
@@ -233,6 +239,8 @@ final class ProxyStatusViewController: NSViewController {
 private final class DomainListView: NSView {
     private let titleLabel = NSTextField(labelWithString: "Configured Domains")
     private let stack = NSStackView()
+    private let scrollView = NSScrollView()
+    private let emptyLabel = NSTextField(labelWithString: "No domains configured")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -240,21 +248,53 @@ private final class DomainListView: NSView {
         titleLabel.textColor = .secondaryLabelColor
 
         stack.orientation = .vertical
-        stack.spacing = 6
+        stack.spacing = 5
+        stack.alignment = .leading
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSStackView(views: [titleLabel, stack])
+        let documentView = FlippedView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor)
+        ])
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.documentView = documentView
+        NSLayoutConstraint.activate([
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+        ])
+
+        emptyLabel.font = .systemFont(ofSize: 12)
+        emptyLabel.textColor = .tertiaryLabelColor
+        emptyLabel.isHidden = true
+
+        let container = NSStackView(views: [titleLabel, scrollView])
         container.orientation = .vertical
         container.spacing = 8
         container.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(container)
+        addSubview(emptyLabel)
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             container.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             container.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             container.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            container.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10)
+            container.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
         ])
     }
 
@@ -270,29 +310,23 @@ private final class DomainListView: NSView {
             view.removeFromSuperview()
         }
 
-        let visibleDomains = Array(domains.prefix(6))
-        if visibleDomains.isEmpty {
-            let empty = NSTextField(labelWithString: "No domains configured")
-            empty.font = .systemFont(ofSize: 12)
-            empty.textColor = .tertiaryLabelColor
-            stack.addArrangedSubview(empty)
-        } else {
-            for domain in visibleDomains {
-                let button = DomainRemoveButton(title: "Remove \(domain)", target: target, action: action)
-                button.domain = domain
-                button.alignment = .left
-                button.bezelStyle = .inline
-                button.font = .systemFont(ofSize: 12, weight: .medium)
-                stack.addArrangedSubview(button)
-            }
+        titleLabel.stringValue = domains.isEmpty
+            ? "Configured Domains"
+            : "Configured Domains (\(domains.count))"
 
-            if domains.count > visibleDomains.count {
-                let more = NSTextField(labelWithString: "+ \(domains.count - visibleDomains.count) more in config")
-                more.font = .systemFont(ofSize: 11, weight: .semibold)
-                more.textColor = .tertiaryLabelColor
-                stack.addArrangedSubview(more)
-            }
+        emptyLabel.isHidden = !domains.isEmpty
+        scrollView.isHidden = domains.isEmpty
+
+        for domain in domains {
+            let row = DomainRowView(domain: domain, target: target, action: action)
+            row.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(row)
+            row.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+            row.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
         }
+
+        // Scroll back to the top after a refresh.
+        scrollView.documentView?.scroll(.zero)
 
         needsDisplay = true
     }
@@ -304,6 +338,106 @@ private final class DomainListView: NSView {
         NSColor(calibratedWhite: 1, alpha: 0.07).setStroke()
         path.lineWidth = 1
         path.stroke()
+    }
+}
+
+@MainActor
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+@MainActor
+private final class DomainRowView: NSView {
+    private let domainLabel = NSTextField(labelWithString: "")
+    private let removeButton: DomainRemoveButton
+    private var trackingArea: NSTrackingArea?
+    private var isHovering = false {
+        didSet { needsDisplay = true }
+    }
+
+    init(domain: String, target: AnyObject, action: Selector) {
+        removeButton = DomainRemoveButton()
+        super.init(frame: .zero)
+
+        domainLabel.stringValue = domain
+        domainLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        domainLabel.textColor = .labelColor
+        domainLabel.lineBreakMode = .byTruncatingMiddle
+        domainLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        domainLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        removeButton.domain = domain
+        removeButton.target = target
+        removeButton.action = action
+        removeButton.isBordered = false
+        removeButton.bezelStyle = .inline
+        removeButton.toolTip = "Remove \(domain)"
+        removeButton.setButtonType(.momentaryChange)
+        removeButton.imagePosition = .imageOnly
+        removeButton.translatesAutoresizingMaskIntoConstraints = false
+        removeButton.setContentHuggingPriority(.required, for: .horizontal)
+        setRemoveTint(.secondaryLabelColor)
+
+        addSubview(domainLabel)
+        addSubview(removeButton)
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 28),
+            domainLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            domainLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            removeButton.leadingAnchor.constraint(greaterThanOrEqualTo: domainLabel.trailingAnchor, constant: 8),
+            removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            removeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            removeButton.widthAnchor.constraint(equalToConstant: 18),
+            removeButton.heightAnchor.constraint(equalToConstant: 18)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    private func setRemoveTint(_ color: NSColor) {
+        let title = NSAttributedString(
+            string: "✕",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .bold),
+                .foregroundColor: color
+            ]
+        )
+        removeButton.attributedTitle = title
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        setRemoveTint(.labelColor)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        setRemoveTint(.secondaryLabelColor)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isHovering else { return }
+        NSColor(calibratedWhite: 1, alpha: 0.08).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
     }
 }
 
