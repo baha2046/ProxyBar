@@ -21,6 +21,7 @@ struct ProxyBarCoreTests {
         try await testPACHTTPServerServesProxyPAC()
         try testPACHTTPServerReportsOccupiedPort()
         try testSOCKS5ServerRejectsNonSocksGreeting()
+        try testSOCKS5ServerHandlesFragmentedRequest()
         try await testEmbeddedProxyServerReloadsSettings()
         print("ProxyBarCoreTests passed")
     }
@@ -220,6 +221,34 @@ struct ProxyBarCoreTests {
         expectEqual(response, [])
     }
 
+    private static func testSOCKS5ServerHandlesFragmentedRequest() throws {
+        let server = SOCKS5Server(settings: .init(socksPort: 0, pacPort: 0, domains: [], dohServers: []))
+        try server.start()
+        defer { server.stop() }
+
+        let socket = try TestSocket.connect(port: server.boundPort)
+        defer { socket.close() }
+
+        // Greeting in one write, expect method-selection reply.
+        try socket.write([0x05, 0x01, 0x00])
+        let greetingReply = try socket.read(maxBytes: 2)
+        expectEqual(greetingReply, [0x05, 0x00])
+
+        // CONNECT request to 127.0.0.1:1 (IPv4) sent fragmented across TCP segments.
+        try? socket.write([0x05, 0x01, 0x00, 0x01])
+        usleep(80_000)
+        try? socket.write([127, 0, 0, 1])
+        usleep(80_000)
+        try? socket.write([0x00, 0x01])
+
+        let response = try socket.read(maxBytes: 2)
+        expect(response.count == 2, "Expected a SOCKS5 reply, got \(response)")
+        expectEqual(response[0], 0x05)
+        // 0x07 == command/request not supported (the incomplete-request rejection).
+        // A correctly-parsed fragmented request must reach the connect stage instead.
+        expect(response[1] != 0x07, "Fragmented request was rejected as incomplete (reply byte 0x07)")
+    }
+
     private static func testEmbeddedProxyServerReloadsSettings() async throws {
         let server = EmbeddedProxyServer(settings: .init(socksPort: 0, pacPort: 0, domains: ["one.example"], dohServers: []))
         try server.start()
@@ -281,6 +310,9 @@ struct ProxyBarCoreTests {
             guard fd >= 0 else {
                 throw POSIXError(.init(rawValue: errno) ?? .EIO)
             }
+
+            var noSigPipe: Int32 = 1
+            setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
 
             var address = sockaddr_in()
             address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)

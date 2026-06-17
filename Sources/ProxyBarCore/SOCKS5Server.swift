@@ -60,10 +60,13 @@ public final class SOCKS5Server: @unchecked Sendable {
                 continue
             }
             Self.disableSIGPIPE(on: client)
+            Self.enableTCPNoDelay(on: client)
             let connectionID = makeConnectionID()
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let thread = Thread { [weak self] in
                 self?.handle(client: client, connectionID: connectionID)
             }
+            thread.stackSize = 512 * 1024
+            thread.start()
         }
     }
 
@@ -74,7 +77,12 @@ public final class SOCKS5Server: @unchecked Sendable {
             ProxyBarLog.socks.debug("SOCKS5 #\(connectionID, privacy: .public) closed")
         }
 
-        guard let greeting = readBytes(from: client, maxCount: 512),
+        // Bound the handshake so a client that connects but never completes
+        // the SOCKS5 negotiation cannot hold a worker thread indefinitely.
+        Self.setReadTimeout(on: client, seconds: Self.handshakeTimeoutSeconds)
+        let reader = HandshakeReader(fd: client)
+
+        guard let greeting = reader.read(requiredLength: Self.greetingLength),
               greeting.count >= 3,
               greeting[0] == 0x05 else {
             ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) rejected invalid greeting")
@@ -85,7 +93,7 @@ public final class SOCKS5Server: @unchecked Sendable {
             return
         }
 
-        guard let request = readBytes(from: client, maxCount: 512),
+        guard let request = reader.read(requiredLength: Self.requestLength),
               request.count >= 7,
               request[0] == 0x05,
               request[1] == 0x01 else {
@@ -127,7 +135,17 @@ public final class SOCKS5Server: @unchecked Sendable {
             return
         }
 
-        relay(client, remote, connectionID: connectionID, host: destination.host, port: destination.port)
+        // Handshake done: clear the timeout so long-lived idle relays are not
+        // torn down, and hand any bytes already buffered to the relay stage.
+        Self.setReadTimeout(on: client, seconds: 0)
+        relay(
+            client,
+            remote,
+            connectionID: connectionID,
+            host: destination.host,
+            port: destination.port,
+            pendingFromClient: reader.leftover
+        )
     }
 
     private struct Destination {
@@ -170,6 +188,7 @@ public final class SOCKS5Server: @unchecked Sendable {
             return -1
         }
         Self.disableSIGPIPE(on: fd)
+        Self.enableTCPNoDelay(on: fd)
 
         if let interfaceIndex = Self.findInterfaceIndex() {
             var index = interfaceIndex
@@ -223,29 +242,52 @@ public final class SOCKS5Server: @unchecked Sendable {
         return response
     }
 
-    private func relay(_ left: Int32, _ right: Int32, connectionID: UInt64, host: String, port: UInt16) {
-        let group = DispatchGroup()
+    private func relay(
+        _ client: Int32,
+        _ remote: Int32,
+        connectionID: UInt64,
+        host: String,
+        port: UInt16,
+        pendingFromClient: [UInt8]
+    ) {
         let clientToRemote = RelayResultBox()
-        let remoteToClient = RelayResultBox()
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            clientToRemote.result = Self.copy(from: left, to: right)
-            Darwin.shutdown(right, SHUT_WR)
-            group.leave()
+        let done = DispatchSemaphore(value: 0)
+
+        // Pump client -> remote on a dedicated thread so this connection never
+        // depends on the shared GCD worker pool (which has a hard thread cap and
+        // starves under bursts of concurrent connections).
+        let pump = Thread { [weak self] in
+            var result = RelayResult()
+            if !pendingFromClient.isEmpty {
+                if self?.writeBytes(pendingFromClient, to: remote) == true {
+                    result.bytes += pendingFromClient.count
+                } else {
+                    result.writeError = errno
+                }
+            }
+            if result.writeError == nil {
+                let copied = Self.copy(from: client, to: remote)
+                result.bytes += copied.bytes
+                result.readError = copied.readError
+                result.writeError = copied.writeError
+            }
+            clientToRemote.result = result
+            Darwin.shutdown(remote, SHUT_WR)
+            done.signal()
         }
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            remoteToClient.result = Self.copy(from: right, to: left)
-            Darwin.shutdown(left, SHUT_WR)
-            group.leave()
-        }
-        group.wait()
+        pump.stackSize = 512 * 1024
+        pump.start()
+
+        let remoteToClient = Self.copy(from: remote, to: client)
+        Darwin.shutdown(client, SHUT_WR)
+        done.wait()
+
         logRelayCompletion(
             connectionID: connectionID,
             host: host,
             port: port,
             clientToRemote: clientToRemote.result,
-            remoteToClient: remoteToClient.result
+            remoteToClient: remoteToClient
         )
     }
 
@@ -276,17 +318,70 @@ public final class SOCKS5Server: @unchecked Sendable {
         }
     }
 
-    private func readBytes(from fd: Int32, maxCount: Int) -> [UInt8]? {
-        var buffer = [UInt8](repeating: 0, count: maxCount)
-        let count = Darwin.read(fd, &buffer, maxCount)
-        guard count > 0 else {
-            if count < 0 {
-                let error = errno
-                ProxyBarLog.socks.error("SOCKS5 read failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
-            }
-            return nil
+    /// Maximum seconds a client may take to complete the SOCKS5 handshake.
+    private static let handshakeTimeoutSeconds = 30
+
+    /// Required total length of a SOCKS5 greeting `[VER, NMETHODS, METHODS...]`.
+    /// Returns nil while the header is incomplete so the reader keeps reading.
+    private static func greetingLength(_ buffer: [UInt8]) -> Int? {
+        guard buffer.count >= 2 else { return nil }
+        guard buffer[0] == 0x05 else { return buffer.count }
+        return 2 + Int(buffer[1])
+    }
+
+    /// Required total length of a SOCKS5 request, derived from its address type.
+    /// Returns nil while not enough bytes have arrived to determine the length.
+    private static func requestLength(_ buffer: [UInt8]) -> Int? {
+        guard buffer.count >= 4 else { return nil }
+        switch buffer[3] {
+        case 0x01: // IPv4: VER CMD RSV ATYP + 4 addr + 2 port
+            return 10
+        case 0x03: // domain: VER CMD RSV ATYP + 1 len + len + 2 port
+            guard buffer.count >= 5 else { return nil }
+            return 7 + Int(buffer[4])
+        case 0x04: // IPv6: VER CMD RSV ATYP + 16 addr + 2 port
+            return 22
+        default:
+            return buffer.count
         }
-        return Array(buffer.prefix(count))
+    }
+
+    /// Reads framed SOCKS5 messages from a socket, accumulating bytes across
+    /// multiple `read()` calls until a complete message is available. Any bytes
+    /// beyond the current message are retained for the next read (or relayed).
+    private final class HandshakeReader {
+        private let fd: Int32
+        private(set) var leftover: [UInt8] = []
+
+        init(fd: Int32) {
+            self.fd = fd
+        }
+
+        /// Reads until `requiredLength(buffer)` is satisfied, returns exactly
+        /// that many bytes, and keeps the remainder in `leftover`.
+        func read(requiredLength: ([UInt8]) -> Int?) -> [UInt8]? {
+            var chunk = [UInt8](repeating: 0, count: 512)
+            while true {
+                if let required = requiredLength(leftover), leftover.count >= required {
+                    let message = Array(leftover.prefix(required))
+                    leftover.removeFirst(required)
+                    return message
+                }
+                // Guard against an unbounded handshake from a hostile client.
+                guard leftover.count < 4096 else {
+                    return nil
+                }
+                let count = Darwin.read(fd, &chunk, chunk.count)
+                guard count > 0 else {
+                    if count < 0 {
+                        let error = errno
+                        ProxyBarLog.socks.error("SOCKS5 read failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+                    }
+                    return nil
+                }
+                leftover.append(contentsOf: chunk[0..<count])
+            }
+        }
     }
 
     @discardableResult
@@ -399,6 +494,18 @@ public final class SOCKS5Server: @unchecked Sendable {
     private static func disableSIGPIPE(on fd: Int32) {
         var value: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &value, socklen_t(MemoryLayout<Int32>.size))
+    }
+
+    private static func enableTCPNoDelay(on fd: Int32) {
+        var value: Int32 = 1
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, socklen_t(MemoryLayout<Int32>.size))
+    }
+
+    /// Sets the receive timeout for a socket. Passing 0 clears the timeout
+    /// (the socket blocks indefinitely again).
+    private static func setReadTimeout(on fd: Int32, seconds: Int) {
+        var timeout = timeval(tv_sec: seconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }
 
     private static func boundPort(for fd: Int32) throws -> UInt16 {
