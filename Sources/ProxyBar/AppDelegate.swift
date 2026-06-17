@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMessage = "Ready"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ProxyBarDiagnostics.install()
+        ProxyBarLog.lifecycle.info("ProxyBar application did finish launching")
         NSApp.setActivationPolicy(.accessory)
         ApplicationMenu.install()
         statusItem.button?.image = StatusIcon.make()
@@ -18,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ProxyBarLog.lifecycle.info("ProxyBar application will terminate")
         proxyServer?.stop()
     }
 
@@ -98,8 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             proxyServer = server
             try SystemActions(settings: settings).apply()
             statusMessage = "Proxy listening on SOCKS5 \(server.boundSOCKSPort), PAC \(server.boundPACPort)"
+            ProxyBarLog.lifecycle.info("ProxyBar proxy server started successfully")
         } catch {
             statusMessage = error.localizedDescription
+            ProxyBarLog.lifecycle.error("ProxyBar proxy server start failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -115,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         try SystemActions(settings: settings).apply()
+        ProxyBarLog.lifecycle.info("ProxyBar proxy settings reloaded successfully")
     }
 
     private func rebuildMenu() {

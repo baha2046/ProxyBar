@@ -36,6 +36,7 @@ public final class PACHTTPServer: @unchecked Sendable {
         socketDescriptor = fd
         boundPort = try Self.boundPort(for: fd)
         isRunning = true
+        ProxyBarLog.pac.info("PAC HTTP server listening on 127.0.0.1:\(self.boundPort, privacy: .public)")
 
         queue.async { [weak self] in
             self?.acceptLoop()
@@ -49,6 +50,7 @@ public final class PACHTTPServer: @unchecked Sendable {
         isRunning = false
         Darwin.shutdown(socketDescriptor, SHUT_RDWR)
         Darwin.close(socketDescriptor)
+        ProxyBarLog.pac.info("PAC HTTP server stopped")
         socketDescriptor = -1
     }
 
@@ -56,8 +58,13 @@ public final class PACHTTPServer: @unchecked Sendable {
         while isRunning {
             let client = Darwin.accept(socketDescriptor, nil, nil)
             if client < 0 {
+                let error = errno
+                if isRunning {
+                    ProxyBarLog.pac.error("PAC accept failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+                }
                 continue
             }
+            Self.disableSIGPIPE(on: client)
             DispatchQueue.global(qos: .utility).async { [weak self] in
                 self?.handle(client: client)
             }
@@ -67,7 +74,11 @@ public final class PACHTTPServer: @unchecked Sendable {
     private func handle(client: Int32) {
         defer { Darwin.close(client) }
         var buffer = [UInt8](repeating: 0, count: 1024)
-        _ = Darwin.read(client, &buffer, buffer.count)
+        let requestBytes = Darwin.read(client, &buffer, buffer.count)
+        if requestBytes < 0 {
+            let error = errno
+            ProxyBarLog.pac.error("PAC request read failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+        }
 
         contentLock.lock()
         let body = content
@@ -81,8 +92,14 @@ public final class PACHTTPServer: @unchecked Sendable {
         \r
         \(body)
         """
-        _ = response.withCString { pointer in
+        let written = response.withCString { pointer in
             Darwin.write(client, pointer, strlen(pointer))
+        }
+        if written < 0 {
+            let error = errno
+            ProxyBarLog.pac.error("PAC response write failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+        } else {
+            ProxyBarLog.pac.debug("PAC response served, request_bytes=\(requestBytes, privacy: .public), response_bytes=\(written, privacy: .public)")
         }
     }
 
@@ -91,6 +108,7 @@ public final class PACHTTPServer: @unchecked Sendable {
         guard fd >= 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
+        disableSIGPIPE(on: fd)
 
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
@@ -133,5 +151,10 @@ public final class PACHTTPServer: @unchecked Sendable {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
         return UInt16(bigEndian: address.sin_port)
+    }
+
+    private static func disableSIGPIPE(on fd: Int32) {
+        var value: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &value, socklen_t(MemoryLayout<Int32>.size))
     }
 }

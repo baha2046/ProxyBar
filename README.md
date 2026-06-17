@@ -60,3 +60,23 @@ Open `.build/ProxyBar.app`. It appears in the macOS menu bar as `ProxyBar`.
 
 ProxyBar is intentionally unsandboxed because it needs to edit your home config
 file, bind local proxy ports, and run `networksetup`.
+
+## Troubleshooting
+
+ProxyBar writes diagnostic messages to macOS unified logging with subsystem
+`ProxyBar`. To watch live logs while reproducing a crash:
+
+```sh
+log stream --predicate 'subsystem == "ProxyBar"' --info --debug
+```
+
+To inspect recent logs after reopening the app:
+
+```sh
+log show --last 10m --predicate 'subsystem == "ProxyBar"' --info --debug
+```
+
+If the app quits while loading a busy site such as `https://www.yahoo.co.jp/`,
+check the last `socks5` entries first. They include the SOCKS5 connection ID,
+destination host and port, DoH result, relay byte counts, and socket errors such
+as `Broken pipe`.

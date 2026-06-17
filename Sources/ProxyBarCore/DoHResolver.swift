@@ -44,11 +44,13 @@ public final class DoHResolver: @unchecked Sendable {
 
     public func resolveARecord(_ name: String) -> String? {
         if let cached = cachedAddress(for: name) {
+            ProxyBarLog.doh.debug("DoH cache hit for \(name, privacy: .public): \(cached, privacy: .public)")
             return cached
         }
 
         for server in servers {
             guard var components = URLComponents(string: server) else {
+                ProxyBarLog.doh.error("Skipping invalid DoH server URL: \(server, privacy: .public)")
                 continue
             }
             components.queryItems = [
@@ -73,12 +75,27 @@ public final class DoHResolver: @unchecked Sendable {
                 semaphore.signal()
             }.resume()
 
-            guard semaphore.wait(timeout: .now() + 3) == .success,
-                  case .success(let payload) = box.result,
-                  let http = payload.1 as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  let parsed = try? JSONDecoder().decode(Response.self, from: payload.0),
+            guard semaphore.wait(timeout: .now() + 3) == .success else {
+                ProxyBarLog.doh.error("DoH lookup timed out for \(name, privacy: .public) via \(server, privacy: .public)")
+                continue
+            }
+            guard case .success(let payload) = box.result else {
+                if case .failure(let error) = box.result {
+                    ProxyBarLog.doh.error("DoH lookup failed for \(name, privacy: .public) via \(server, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                } else {
+                    ProxyBarLog.doh.error("DoH lookup returned no result for \(name, privacy: .public) via \(server, privacy: .public)")
+                }
+                continue
+            }
+            guard let http = payload.1 as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                let statusCode = (payload.1 as? HTTPURLResponse)?.statusCode ?? -1
+                ProxyBarLog.doh.error("DoH lookup returned HTTP \(statusCode, privacy: .public) for \(name, privacy: .public) via \(server, privacy: .public)")
+                continue
+            }
+            guard let parsed = try? JSONDecoder().decode(Response.self, from: payload.0),
                   let answers = parsed.Answer else {
+                ProxyBarLog.doh.error("DoH lookup returned undecodable response for \(name, privacy: .public) via \(server, privacy: .public)")
                 continue
             }
 
@@ -93,10 +110,13 @@ public final class DoHResolver: @unchecked Sendable {
 
             if let first = addresses.first {
                 cache(addresses: addresses, for: name, ttl: minTTL)
+                ProxyBarLog.doh.info("DoH resolved \(name, privacy: .public) to \(first, privacy: .public) via \(server, privacy: .public), answers=\(addresses.count, privacy: .public), ttl=\(minTTL, privacy: .public)")
                 return first
             }
+            ProxyBarLog.doh.error("DoH response had no A records for \(name, privacy: .public) via \(server, privacy: .public)")
         }
 
+        ProxyBarLog.doh.error("DoH resolution exhausted all servers for \(name, privacy: .public)")
         return nil
     }
 

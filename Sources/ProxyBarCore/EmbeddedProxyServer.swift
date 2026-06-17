@@ -25,6 +25,7 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
         defer { lock.unlock() }
 
         guard pacServer == nil, socksServer == nil else {
+            ProxyBarLog.lifecycle.debug("Embedded proxy start skipped because servers are already running")
             return
         }
         try startLocked(settings: settings)
@@ -47,9 +48,11 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
         if pacPortMatches && socksCanStayRunning {
             settings = newSettings
             pacServer?.update(content: PACGenerator.generate(domains: newSettings.domains, socksPort: boundSOCKSPort))
+            ProxyBarLog.lifecycle.info("Embedded proxy reloaded PAC content without restarting servers")
             return
         }
 
+        ProxyBarLog.lifecycle.info("Embedded proxy restarting for settings reload")
         stopLocked()
         settings = newSettings
         try startLocked(settings: newSettings)
@@ -62,6 +65,7 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
     }
 
     private func startLocked(settings: ProxySettings) throws {
+        ProxyBarLog.lifecycle.info("Starting embedded proxy servers with requested SOCKS5 port \(settings.socksPort, privacy: .public), PAC port \(settings.pacPort, privacy: .public)")
         let socks = SOCKS5Server(settings: settings)
         try socks.start()
 
@@ -81,15 +85,18 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
         pacServer = pac
         boundSOCKSPort = socks.boundPort
         boundPACPort = pac.boundPort
+        ProxyBarLog.lifecycle.info("Embedded proxy started with SOCKS5 port \(self.boundSOCKSPort, privacy: .public), PAC port \(self.boundPACPort, privacy: .public)")
 
         if enableWireGuardWatcher {
             let watcher = WireGuardProxyWatcher()
             watcher.start()
             wireGuardWatcher = watcher
+            ProxyBarLog.lifecycle.info("WireGuard proxy watcher started")
         }
     }
 
     private func stopLocked() {
+        ProxyBarLog.lifecycle.info("Stopping embedded proxy servers")
         wireGuardWatcher?.stop()
         wireGuardWatcher = nil
         pacServer?.stop()

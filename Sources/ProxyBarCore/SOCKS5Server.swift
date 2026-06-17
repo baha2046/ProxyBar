@@ -7,8 +7,10 @@ public final class SOCKS5Server: @unchecked Sendable {
     private let settings: ProxySettings
     private let resolver: DoHResolver
     private let queue = DispatchQueue(label: "ProxyBar.SOCKS5Server")
+    private let connectionIDLock = NSLock()
     private var socketDescriptor: Int32 = -1
     private var isRunning = false
+    private var nextConnectionID: UInt64 = 1
 
     public init(settings: ProxySettings) {
         self.settings = settings
@@ -29,6 +31,7 @@ public final class SOCKS5Server: @unchecked Sendable {
         socketDescriptor = fd
         boundPort = try Self.boundPort(for: fd)
         isRunning = true
+        ProxyBarLog.socks.info("SOCKS5 server listening on 127.0.0.1:\(self.boundPort, privacy: .public)")
 
         queue.async { [weak self] in
             self?.acceptLoop()
@@ -42,6 +45,7 @@ public final class SOCKS5Server: @unchecked Sendable {
         isRunning = false
         Darwin.shutdown(socketDescriptor, SHUT_RDWR)
         Darwin.close(socketDescriptor)
+        ProxyBarLog.socks.info("SOCKS5 server stopped")
         socketDescriptor = -1
     }
 
@@ -49,23 +53,35 @@ public final class SOCKS5Server: @unchecked Sendable {
         while isRunning {
             let client = Darwin.accept(socketDescriptor, nil, nil)
             if client < 0 {
+                let error = errno
+                if isRunning {
+                    ProxyBarLog.socks.error("SOCKS5 accept failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+                }
                 continue
             }
+            Self.disableSIGPIPE(on: client)
+            let connectionID = makeConnectionID()
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.handle(client: client)
+                self?.handle(client: client, connectionID: connectionID)
             }
         }
     }
 
-    private func handle(client: Int32) {
-        defer { Darwin.close(client) }
+    private func handle(client: Int32, connectionID: UInt64) {
+        ProxyBarLog.socks.debug("SOCKS5 #\(connectionID, privacy: .public) accepted")
+        defer {
+            Darwin.close(client)
+            ProxyBarLog.socks.debug("SOCKS5 #\(connectionID, privacy: .public) closed")
+        }
 
         guard let greeting = readBytes(from: client, maxCount: 512),
               greeting.count >= 3,
               greeting[0] == 0x05 else {
+            ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) rejected invalid greeting")
             return
         }
         guard writeBytes([0x05, 0x00], to: client) else {
+            ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) failed writing greeting response")
             return
         }
 
@@ -73,38 +89,45 @@ public final class SOCKS5Server: @unchecked Sendable {
               request.count >= 7,
               request[0] == 0x05,
               request[1] == 0x01 else {
+            ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) rejected unsupported or incomplete request")
             _ = writeBytes([0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0], to: client)
             return
         }
 
         guard let destination = destination(from: request) else {
+            ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) rejected malformed destination")
             _ = writeBytes([0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0], to: client)
             return
         }
+        ProxyBarLog.socks.info("SOCKS5 #\(connectionID, privacy: .public) requested \(destination.host, privacy: .public):\(destination.port, privacy: .public)")
 
         let remoteHost: String
         if destination.isDomain {
             guard let resolved = resolver.resolveARecord(destination.host) else {
+                ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) DNS resolution failed for \(destination.host, privacy: .public)")
                 _ = writeBytes([0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0], to: client)
                 return
             }
             remoteHost = resolved
+            ProxyBarLog.socks.info("SOCKS5 #\(connectionID, privacy: .public) resolved \(destination.host, privacy: .public) to \(remoteHost, privacy: .public)")
         } else {
             remoteHost = destination.host
         }
 
         let remote = connect(host: remoteHost, port: destination.port)
         guard remote >= 0 else {
+            ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) failed connecting to \(remoteHost, privacy: .public):\(destination.port, privacy: .public)")
             _ = writeBytes([0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0], to: client)
             return
         }
         defer { Darwin.close(remote) }
 
         guard writeBytes(successResponse(for: remote), to: client) else {
+            ProxyBarLog.socks.error("SOCKS5 #\(connectionID, privacy: .public) failed writing success response")
             return
         }
 
-        relay(client, remote)
+        relay(client, remote, connectionID: connectionID, host: destination.host, port: destination.port)
     }
 
     private struct Destination {
@@ -142,12 +165,19 @@ public final class SOCKS5Server: @unchecked Sendable {
     private func connect(host: String, port: UInt16) -> Int32 {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else {
+            let error = errno
+            ProxyBarLog.socks.error("SOCKS5 remote socket creation failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
             return -1
         }
+        Self.disableSIGPIPE(on: fd)
 
         if let interfaceIndex = Self.findInterfaceIndex() {
             var index = interfaceIndex
-            setsockopt(fd, IPPROTO_IP, 25, &index, socklen_t(MemoryLayout<UInt32>.size))
+            let status = setsockopt(fd, IPPROTO_IP, 25, &index, socklen_t(MemoryLayout<UInt32>.size))
+            if status != 0 {
+                let error = errno
+                ProxyBarLog.socks.error("SOCKS5 interface binding failed for \(host, privacy: .public): errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+            }
         }
 
         var address = sockaddr_in()
@@ -163,6 +193,8 @@ public final class SOCKS5Server: @unchecked Sendable {
         }
 
         guard status == 0 else {
+            let error = errno
+            ProxyBarLog.socks.error("SOCKS5 connect failed to \(host, privacy: .public):\(port, privacy: .public): errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
             Darwin.close(fd)
             return -1
         }
@@ -191,29 +223,43 @@ public final class SOCKS5Server: @unchecked Sendable {
         return response
     }
 
-    private func relay(_ left: Int32, _ right: Int32) {
+    private func relay(_ left: Int32, _ right: Int32, connectionID: UInt64, host: String, port: UInt16) {
         let group = DispatchGroup()
+        let clientToRemote = RelayResultBox()
+        let remoteToClient = RelayResultBox()
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            Self.copy(from: left, to: right)
+            clientToRemote.result = Self.copy(from: left, to: right)
             Darwin.shutdown(right, SHUT_WR)
             group.leave()
         }
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            Self.copy(from: right, to: left)
+            remoteToClient.result = Self.copy(from: right, to: left)
             Darwin.shutdown(left, SHUT_WR)
             group.leave()
         }
         group.wait()
+        logRelayCompletion(
+            connectionID: connectionID,
+            host: host,
+            port: port,
+            clientToRemote: clientToRemote.result,
+            remoteToClient: remoteToClient.result
+        )
     }
 
-    private static func copy(from source: Int32, to destination: Int32) {
+    private static func copy(from source: Int32, to destination: Int32) -> RelayResult {
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        var result = RelayResult()
         while true {
             let count = Darwin.read(source, &buffer, buffer.count)
+            if count == 0 {
+                return result
+            }
             guard count > 0 else {
-                return
+                result.readError = errno
+                return result
             }
             var written = 0
             while written < count {
@@ -221,9 +267,11 @@ public final class SOCKS5Server: @unchecked Sendable {
                     Darwin.write(destination, rawBuffer.baseAddress!.advanced(by: written), count - written)
                 }
                 guard n > 0 else {
-                    return
+                    result.writeError = errno
+                    return result
                 }
                 written += n
+                result.bytes += n
             }
         }
     }
@@ -232,6 +280,10 @@ public final class SOCKS5Server: @unchecked Sendable {
         var buffer = [UInt8](repeating: 0, count: maxCount)
         let count = Darwin.read(fd, &buffer, maxCount)
         guard count > 0 else {
+            if count < 0 {
+                let error = errno
+                ProxyBarLog.socks.error("SOCKS5 read failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
+            }
             return nil
         }
         return Array(buffer.prefix(count))
@@ -245,6 +297,8 @@ public final class SOCKS5Server: @unchecked Sendable {
                 Darwin.write(fd, rawBuffer.baseAddress!.advanced(by: offset), bytes.count - offset)
             }
             guard count > 0 else {
+                let error = errno
+                ProxyBarLog.socks.error("SOCKS5 write failed: errno=\(error, privacy: .public) \(posixErrorDescription(error), privacy: .public)")
                 return false
             }
             offset += count
@@ -257,6 +311,7 @@ public final class SOCKS5Server: @unchecked Sendable {
         guard fd >= 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
+        disableSIGPIPE(on: fd)
 
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
@@ -285,6 +340,65 @@ public final class SOCKS5Server: @unchecked Sendable {
         }
 
         return fd
+    }
+
+    private func makeConnectionID() -> UInt64 {
+        connectionIDLock.lock()
+        defer { connectionIDLock.unlock() }
+        let id = nextConnectionID
+        nextConnectionID += 1
+        return id
+    }
+
+    private struct RelayResult {
+        var bytes = 0
+        var readError: Int32?
+        var writeError: Int32?
+    }
+
+    private final class RelayResultBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage = RelayResult()
+
+        var result: RelayResult {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return storage
+            }
+            set {
+                lock.lock()
+                storage = newValue
+                lock.unlock()
+            }
+        }
+    }
+
+    private func logRelayCompletion(
+        connectionID: UInt64,
+        host: String,
+        port: UInt16,
+        clientToRemote: RelayResult,
+        remoteToClient: RelayResult
+    ) {
+        let clientReadError = clientToRemote.readError.map(posixErrorDescription) ?? "none"
+        let clientWriteError = clientToRemote.writeError.map(posixErrorDescription) ?? "none"
+        let remoteReadError = remoteToClient.readError.map(posixErrorDescription) ?? "none"
+        let remoteWriteError = remoteToClient.writeError.map(posixErrorDescription) ?? "none"
+
+        ProxyBarLog.socks.info(
+            """
+            SOCKS5 #\(connectionID, privacy: .public) relay finished for \(host, privacy: .public):\(port, privacy: .public), \
+            c2r_bytes=\(clientToRemote.bytes, privacy: .public), r2c_bytes=\(remoteToClient.bytes, privacy: .public), \
+            c2r_read_error=\(clientReadError, privacy: .public), c2r_write_error=\(clientWriteError, privacy: .public), \
+            r2c_read_error=\(remoteReadError, privacy: .public), r2c_write_error=\(remoteWriteError, privacy: .public)
+            """
+        )
+    }
+
+    private static func disableSIGPIPE(on fd: Int32) {
+        var value: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &value, socklen_t(MemoryLayout<Int32>.size))
     }
 
     private static func boundPort(for fd: Int32) throws -> UInt16 {
