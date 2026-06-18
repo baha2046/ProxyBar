@@ -13,7 +13,6 @@ struct ProxyStatusViewModel {
     var domains: [String]
     var vpnStatus: VPNStatus
     var errorMessage: String?
-    var openAtLogin: Bool
 }
 
 @MainActor
@@ -22,8 +21,8 @@ final class ProxyStatusViewController: NSViewController {
     var onAddDomain: (() -> Void)?
     var onApply: (() -> Void)?
     var onOpenConfig: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
     var onRemoveDomain: ((String) -> Void)?
-    var onToggleLogin: (() -> Void)?
     var onQuit: (() -> Void)?
 
     private let root = ProxyPanelView()
@@ -38,7 +37,6 @@ final class ProxyStatusViewController: NSViewController {
     private let domainsCard = StatusCardView(title: "Domains")
     private let domainList = DomainListView()
     private let errorCard = ErrorCardView()
-    private let loginButton = NSButton(title: "Open at Login", target: nil, action: nil)
 
     private let layoutMetrics = ProxyPopoverLayoutMetrics(
         panelWidth: 440,
@@ -109,8 +107,6 @@ final class ProxyStatusViewController: NSViewController {
 
         errorCard.message = model.errorMessage
         errorCard.isHidden = model.errorMessage == nil
-
-        loginButton.state = model.openAtLogin ? .on : .off
     }
 
     private func makeHeader() -> NSView {
@@ -205,21 +201,22 @@ final class ProxyStatusViewController: NSViewController {
         let addButton = actionButton(title: "Add", action: #selector(addDomain))
         let applyButton = actionButton(title: "Apply", action: #selector(applyNow))
         let configButton = actionButton(title: "Config", action: #selector(openConfig))
+        let settingsButton = actionButton(title: "Settings", action: #selector(openSettings))
         let quitButton = actionButton(title: "Quit", action: #selector(quit))
 
-        loginButton.target = self
-        loginButton.action = #selector(toggleLogin)
-        loginButton.setButtonType(.switch)
-        loginButton.font = .systemFont(ofSize: 12, weight: .semibold)
-
-        let top = NSStackView(views: [addButton, applyButton, configButton, quitButton])
+        let top = NSStackView(views: [addButton, applyButton, configButton])
         top.orientation = .horizontal
         top.distribution = .fillEqually
         top.spacing = 8
 
-        let stack = NSStackView(views: [loginButton, top])
+        let bottom = NSStackView(views: [settingsButton, quitButton])
+        bottom.orientation = .horizontal
+        bottom.distribution = .fillEqually
+        bottom.spacing = 8
+
+        let stack = NSStackView(views: [top, bottom])
         stack.orientation = .vertical
-        stack.spacing = 10
+        stack.spacing = 8
         return stack
     }
 
@@ -249,12 +246,12 @@ final class ProxyStatusViewController: NSViewController {
         onOpenConfig?()
     }
 
-    @objc private func removeDomain(_ sender: DomainRemoveButton) {
-        onRemoveDomain?(sender.domain)
+    @objc private func openSettings() {
+        onOpenSettings?()
     }
 
-    @objc private func toggleLogin() {
-        onToggleLogin?()
+    @objc private func removeDomain(_ sender: DomainRemoveButton) {
+        onRemoveDomain?(sender.domain)
     }
 
     @objc private func quit() {

@@ -18,16 +18,28 @@ public struct SystemActions {
         }
     }
 
-    public let networkService: String
+    public let networkServices: [String]
     public let pacURL: String
     private let commandRunner: CommandRunner
+
+    public var networkService: String {
+        networkServices.first ?? "Wi-Fi"
+    }
 
     public init(
         networkService: String = "Wi-Fi",
         pacURL: String = "http://127.0.0.1:1081/proxy.pac",
         commandRunner: @escaping CommandRunner = SystemActions.runProcess
     ) {
-        self.networkService = networkService
+        self.init(networkServices: [networkService], pacURL: pacURL, commandRunner: commandRunner)
+    }
+
+    public init(
+        networkServices: [String],
+        pacURL: String = "http://127.0.0.1:1081/proxy.pac",
+        commandRunner: @escaping CommandRunner = SystemActions.runProcess
+    ) {
+        self.networkServices = networkServices.isEmpty ? ["Wi-Fi"] : networkServices
         self.pacURL = pacURL
         self.commandRunner = commandRunner
     }
@@ -40,6 +52,14 @@ public struct SystemActions {
         self.init(networkService: networkService, pacURL: settings.pacURL, commandRunner: commandRunner)
     }
 
+    public init(
+        settings: ProxySettings,
+        networkServices: [String],
+        commandRunner: @escaping CommandRunner = SystemActions.runProcess
+    ) {
+        self.init(networkServices: networkServices, pacURL: settings.pacURL, commandRunner: commandRunner)
+    }
+
     public func apply() throws {
         try refreshPAC()
     }
@@ -49,25 +69,29 @@ public struct SystemActions {
     }
 
     public func refreshPAC() throws {
-        try run(
-            executable: "/usr/sbin/networksetup",
-            arguments: ["-setautoproxystate", networkService, "off"]
-        )
-        try run(
-            executable: "/usr/sbin/networksetup",
-            arguments: ["-setautoproxyurl", networkService, pacURL]
-        )
-        try run(
-            executable: "/usr/sbin/networksetup",
-            arguments: ["-setautoproxystate", networkService, "on"]
-        )
+        for service in networkServices {
+            try run(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", service, "off"]
+            )
+            try run(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxyurl", service, pacURL]
+            )
+            try run(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", service, "on"]
+            )
+        }
     }
 
     public func disableAutoProxy() throws {
-        try run(
-            executable: "/usr/sbin/networksetup",
-            arguments: ["-setautoproxystate", networkService, "off"]
-        )
+        for service in networkServices {
+            try run(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", service, "off"]
+            )
+        }
     }
 
     @discardableResult
@@ -98,5 +122,33 @@ public struct SystemActions {
             )
         }
         return output
+    }
+}
+
+public enum ProxyNetworkScope: String, CaseIterable, Equatable, Sendable {
+    case wifi
+    case lan
+    case both
+
+    public var title: String {
+        switch self {
+        case .wifi:
+            return "Wi-Fi"
+        case .lan:
+            return "LAN"
+        case .both:
+            return "Both"
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .wifi:
+            return "Wi-Fi"
+        case .lan:
+            return "LAN"
+        case .both:
+            return "Wi-Fi and LAN"
+        }
     }
 }

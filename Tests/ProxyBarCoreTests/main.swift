@@ -17,8 +17,15 @@ struct ProxyBarCoreTests {
         try testReplacesOnlyDomainBlock()
         try testMissingDomainBlockReportsError()
         try testRefreshPACUsesValidNetworksetupArguments()
+        try testRefreshPACSupportsMultipleNetworkServices()
         try testApplyRefreshesPACWithoutLaunchctl()
         try testDisableAutoProxyUsesNetworksetup()
+        try testDisableAutoProxySupportsMultipleNetworkServices()
+        testProxyNetworkScopeProvidesDisplayLabels()
+        testNetworkServiceResolverParsesServices()
+        try testNetworkServiceResolverFindsUSBLAN()
+        try testNetworkServiceResolverFindsThunderboltEthernet()
+        try testNetworkServiceResolverIgnoresBridgeAndVPNServices()
         testProxyPopoverCardsFitContentWidth()
         testLiquidGlassRequiresMacOS26()
         testVPNStatusParsesConnectedService()
@@ -178,6 +185,43 @@ struct ProxyBarCoreTests {
         ])
     }
 
+    private static func testRefreshPACSupportsMultipleNetworkServices() throws {
+        var commands: [RecordedCommand] = []
+        let actions = SystemActions(networkServices: ["Wi-Fi", "Ethernet"], pacURL: "http://127.0.0.1:1081/proxy.pac") { executable, arguments in
+            commands.append(RecordedCommand(executable: executable, arguments: arguments))
+            return ""
+        }
+
+        try actions.refreshPAC()
+
+        expectEqual(commands, [
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Wi-Fi", "off"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxyurl", "Wi-Fi", "http://127.0.0.1:1081/proxy.pac"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Wi-Fi", "on"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Ethernet", "off"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxyurl", "Ethernet", "http://127.0.0.1:1081/proxy.pac"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Ethernet", "on"]
+            )
+        ])
+    }
+
     private static func testApplyRefreshesPACWithoutLaunchctl() throws {
         var commands: [RecordedCommand] = []
         let actions = SystemActions(settings: .init(socksPort: 1080, pacPort: 1099, domains: [], dohServers: [])) { executable, arguments in
@@ -218,6 +262,85 @@ struct ProxyBarCoreTests {
                 arguments: ["-setautoproxystate", "Wi-Fi", "off"]
             )
         ])
+    }
+
+    private static func testDisableAutoProxySupportsMultipleNetworkServices() throws {
+        var commands: [RecordedCommand] = []
+        let actions = SystemActions(networkServices: ["Wi-Fi", "Ethernet"], pacURL: "http://127.0.0.1:1081/proxy.pac") { executable, arguments in
+            commands.append(RecordedCommand(executable: executable, arguments: arguments))
+            return ""
+        }
+
+        try actions.disableAutoProxy()
+
+        expectEqual(commands, [
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Wi-Fi", "off"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "Ethernet", "off"]
+            )
+        ])
+    }
+
+    private static func testProxyNetworkScopeProvidesDisplayLabels() {
+        expectEqual(ProxyNetworkScope.wifi.title, "Wi-Fi")
+        expectEqual(ProxyNetworkScope.lan.title, "LAN")
+        expectEqual(ProxyNetworkScope.both.title, "Both")
+        expectEqual(ProxyNetworkScope.both.displayName, "Wi-Fi and LAN")
+    }
+
+    private static func testNetworkServiceResolverParsesServices() {
+        let services = NetworkServiceResolver.parseListAllNetworkServices("""
+        An asterisk (*) denotes that a network service is disabled.
+        USB 10/100/1G/2.5G LAN
+        *Thunderbolt Bridge
+        Wi-Fi
+        Surfshark. WireGuard
+        """)
+
+        expectEqual(services, [
+            NetworkServiceResolver.Service(name: "USB 10/100/1G/2.5G LAN", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Thunderbolt Bridge", isEnabled: false),
+            NetworkServiceResolver.Service(name: "Wi-Fi", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Surfshark. WireGuard", isEnabled: true)
+        ])
+    }
+
+    private static func testNetworkServiceResolverFindsUSBLAN() throws {
+        let services = [
+            NetworkServiceResolver.Service(name: "USB 10/100/1G/2.5G LAN", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Wi-Fi", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Surfshark. WireGuard", isEnabled: true)
+        ]
+
+        expectEqual(try NetworkServiceResolver.resolve(scope: .lan, services: services), ["USB 10/100/1G/2.5G LAN"])
+        expectEqual(try NetworkServiceResolver.resolve(scope: .both, services: services), ["Wi-Fi", "USB 10/100/1G/2.5G LAN"])
+    }
+
+    private static func testNetworkServiceResolverFindsThunderboltEthernet() throws {
+        let services = [
+            NetworkServiceResolver.Service(name: "Wi-Fi", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Thunderbolt Ethernet", isEnabled: true)
+        ]
+
+        expectEqual(try NetworkServiceResolver.resolve(scope: .lan, services: services), ["Thunderbolt Ethernet"])
+    }
+
+    private static func testNetworkServiceResolverIgnoresBridgeAndVPNServices() throws {
+        let services = [
+            NetworkServiceResolver.Service(name: "Wi-Fi", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Thunderbolt Bridge", isEnabled: true),
+            NetworkServiceResolver.Service(name: "Surfshark. WireGuard", isEnabled: true)
+        ]
+
+        do {
+            _ = try NetworkServiceResolver.resolve(scope: .lan, services: services)
+            throw TestFailure("Expected missing LAN service to throw")
+        } catch NetworkServiceResolver.ResolutionError.missingLANService {
+        }
     }
 
     private static func testLiquidGlassRequiresMacOS26() {

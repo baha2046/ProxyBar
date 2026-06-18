@@ -7,10 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configStore = ConfigStore()
     private let popover = NSPopover()
     private let popoverController = ProxyStatusViewController()
+    private let settingsWindowController = SettingsWindowController()
     private var proxyServer: EmbeddedProxyServer?
     private var proxyState = ProxyUIState.off
     private var vpnStatus = VPNStatus.disconnected
     private var vpnRefreshTimer: Timer?
+    private var proxyNetworkScope = AppPreferences.proxyNetworkScope
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProxyBarDiagnostics.install()
@@ -70,12 +72,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(configStore.configURL)
     }
 
+    @objc private func openSettings() {
+        settingsWindowController.update(scope: proxyNetworkScope, openAtLogin: LoginItem.isEnabled)
+        settingsWindowController.showWindow(nil)
+        settingsWindowController.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func toggleLoginItem() {
         do {
             try LoginItem.setEnabled(!LoginItem.isEnabled)
         } catch {
             proxyState = .failed(error.localizedDescription)
         }
+        settingsWindowController.update(scope: proxyNetworkScope, openAtLogin: LoginItem.isEnabled)
+        updateUI()
+    }
+
+    private func setProxyNetworkScope(_ scope: ProxyNetworkScope) {
+        guard scope != proxyNetworkScope else {
+            return
+        }
+
+        let previousScope = proxyNetworkScope
+        proxyNetworkScope = scope
+        AppPreferences.proxyNetworkScope = scope
+
+        guard proxyServer != nil else {
+            updateUI()
+            return
+        }
+
+        do {
+            let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
+            try SystemActions(settings: settings, networkServices: networkServices(for: previousScope)).disableAutoProxy()
+            establishRouting()
+        } catch {
+            proxyState = .failed(Self.message(for: error))
+        }
+
         updateUI()
     }
 
@@ -146,14 +181,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popoverController.onOpenConfig = { [weak self] in
             self?.openConfig()
         }
+        popoverController.onOpenSettings = { [weak self] in
+            self?.openSettings()
+        }
         popoverController.onRemoveDomain = { [weak self] domain in
             self?.removeDomain(domain)
         }
-        popoverController.onToggleLogin = { [weak self] in
-            self?.toggleLoginItem()
-        }
         popoverController.onQuit = { [weak self] in
             self?.quit()
+        }
+
+        settingsWindowController.onScopeChange = { [weak self] scope in
+            self?.setProxyNetworkScope(scope)
+        }
+        settingsWindowController.onToggleLogin = { [weak self] in
+            self?.toggleLoginItem()
         }
     }
 
@@ -187,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if disableSystemProxy {
             do {
                 let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
-                try SystemActions(settings: settings).disableAutoProxy()
+                try SystemActions(settings: settings, networkServices: networkServices(for: proxyNetworkScope)).disableAutoProxy()
                 proxyState = .off
             } catch {
                 proxyState = .failed(Self.message(for: error))
@@ -224,11 +266,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
-        let actions = SystemActions(settings: settings)
         let socksPort = proxyServer.boundSOCKSPort
         let pacPort = proxyServer.boundPACPort
 
         do {
+            let actions = SystemActions(settings: settings, networkServices: try networkServices(for: proxyNetworkScope))
             if vpnStatus.isConnected {
                 try actions.apply()
                 proxyState = .running(socksPort: socksPort, pacPort: pacPort)
@@ -279,10 +321,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func disablePACQuietly() {
         let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
         do {
-            try SystemActions(settings: settings).disableAutoProxy()
+            try SystemActions(settings: settings, networkServices: networkServices(for: proxyNetworkScope)).disableAutoProxy()
         } catch {
             ProxyBarLog.lifecycle.error("Failed to disable PAC while entering standby: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func networkServices(for scope: ProxyNetworkScope) throws -> [String] {
+        try NetworkServiceResolver.resolve(scope: scope)
     }
 
     private func updateUI() {
@@ -339,13 +385,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 domainCount: domains.count,
                 domains: domains,
                 vpnStatus: vpnStatus,
-                errorMessage: nil,
-                openAtLogin: LoginItem.isEnabled
+                errorMessage: nil
             )
         case .running(let socksPort, let pacPort):
             return ProxyStatusViewModel(
                 title: "Routing Enabled",
-                detail: "PAC installed on Wi-Fi at \(Self.shortTime())",
+                detail: "PAC installed on \(proxyNetworkScope.displayName) at \(Self.shortTime())",
                 status: status,
                 isOn: true,
                 socksPort: socksPort,
@@ -353,13 +398,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 domainCount: domains.count,
                 domains: domains,
                 vpnStatus: vpnStatus,
-                errorMessage: nil,
-                openAtLogin: LoginItem.isEnabled
+                errorMessage: nil
             )
         case .standby(let socksPort, let pacPort):
             return ProxyStatusViewModel(
                 title: "Standby",
-                detail: "VPN offline — PAC disabled, will resume when VPN connects",
+                detail: "VPN offline — PAC disabled for \(proxyNetworkScope.displayName)",
                 status: status,
                 isOn: true,
                 socksPort: socksPort,
@@ -367,8 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 domainCount: domains.count,
                 domains: domains,
                 vpnStatus: vpnStatus,
-                errorMessage: nil,
-                openAtLogin: LoginItem.isEnabled
+                errorMessage: nil
             )
         case .stopping:
             return ProxyStatusViewModel(
@@ -381,8 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 domainCount: domains.count,
                 domains: domains,
                 vpnStatus: vpnStatus,
-                errorMessage: nil,
-                openAtLogin: LoginItem.isEnabled
+                errorMessage: nil
             )
         case .off:
             return ProxyStatusViewModel(
@@ -395,8 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 domainCount: domains.count,
                 domains: domains,
                 vpnStatus: vpnStatus,
-                errorMessage: nil,
-                openAtLogin: LoginItem.isEnabled
+                errorMessage: nil
             )
         case .failed(let message):
             return ProxyStatusViewModel(
@@ -409,8 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 domainCount: domains.count,
                 domains: domains,
                 vpnStatus: vpnStatus,
-                errorMessage: message,
-                openAtLogin: LoginItem.isEnabled
+                errorMessage: message
             )
         }
     }
