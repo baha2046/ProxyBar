@@ -19,6 +19,7 @@ struct ProxyBarCoreTests {
         try testRefreshPACUsesValidNetworksetupArguments()
         try testApplyRefreshesPACWithoutLaunchctl()
         try testDisableAutoProxyUsesNetworksetup()
+        testLiquidGlassRequiresMacOS26()
         try await testPACHTTPServerServesProxyPAC()
         try testPACHTTPServerReportsOccupiedPort()
         try testSOCKS5ServerReportsOccupiedPort()
@@ -199,6 +200,12 @@ struct ProxyBarCoreTests {
                 arguments: ["-setautoproxystate", "Wi-Fi", "off"]
             )
         ])
+    }
+
+    private static func testLiquidGlassRequiresMacOS26() {
+        expect(!ProxyBarPlatformFeatures.usesLiquidGlass(on: OperatingSystemVersion(majorVersion: 25, minorVersion: 9, patchVersion: 0)), "Expected macOS 25 to keep the legacy background")
+        expect(ProxyBarPlatformFeatures.usesLiquidGlass(on: OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)), "Expected macOS 26 to enable Liquid Glass")
+        expect(ProxyBarPlatformFeatures.usesLiquidGlass(on: OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)), "Expected macOS 27 to keep Liquid Glass enabled")
     }
 
     private static func testPACHTTPServerServesProxyPAC() async throws {

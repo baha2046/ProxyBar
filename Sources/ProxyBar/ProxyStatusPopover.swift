@@ -1,4 +1,5 @@
 import AppKit
+import ProxyBarCore
 
 @MainActor
 struct ProxyStatusViewModel {
@@ -40,10 +41,10 @@ final class ProxyStatusViewController: NSViewController {
     private var isUpdatingSwitch = false
 
     override func loadView() {
-        preferredContentSize = NSSize(width: 390, height: 748)
+        preferredContentSize = NSSize(width: 440, height: 748)
         view = root
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.widthAnchor.constraint(equalToConstant: 390).isActive = true
+        view.widthAnchor.constraint(equalToConstant: 440).isActive = true
 
         let header = makeHeader()
         let stateBlock = makeStateBlock()
@@ -62,12 +63,13 @@ final class ProxyStatusViewController: NSViewController {
         domainList.setContentHuggingPriority(.defaultLow, for: .vertical)
         domainList.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
 
-        view.addSubview(stack)
+        root.contentView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            stack.widthAnchor.constraint(equalToConstant: 440),
+            stack.leadingAnchor.constraint(equalTo: root.contentView.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: root.contentView.trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: root.contentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: root.contentView.bottomAnchor)
         ])
     }
 
@@ -82,6 +84,12 @@ final class ProxyStatusViewController: NSViewController {
         proxySwitch.state = model.isOn ? .on : .off
         proxySwitch.isEnabled = model.status != .working
         isUpdatingSwitch = false
+
+        NSLayoutConstraint.activate([
+            socksCard.widthAnchor.constraint(equalToConstant: 127),
+            pacCard.widthAnchor.constraint(equalToConstant: 127),
+            domainsCard.widthAnchor.constraint(equalToConstant: 127)
+        ])
 
         socksCard.update(value: model.socksPort.map { "127.0.0.1:\($0)" } ?? "Stopped", status: model.status)
         pacCard.update(value: model.pacPort.map { "127.0.0.1:\($0)" } ?? "Stopped", status: model.status)
@@ -141,7 +149,7 @@ final class ProxyStatusViewController: NSViewController {
         let block = RoundedBlockView()
         block.translatesAutoresizingMaskIntoConstraints = false
 
-        let main = NSTextField(labelWithString: "Local proxy control")
+        let main = NSTextField(labelWithString: "Split Tunneling for WireGuard")
         main.font = .systemFont(ofSize: 13, weight: .semibold)
         main.textColor = .secondaryLabelColor
         main.lineBreakMode = .byWordWrapping
@@ -448,19 +456,92 @@ private final class DomainRemoveButton: NSButton {
 
 @MainActor
 private final class ProxyPanelView: NSView {
+    let contentView = NSView()
+
     var status: StatusIcon.State = .off {
-        didSet { needsDisplay = true }
+        didSet {
+            updateGlassTint()
+            needsDisplay = true
+        }
+    }
+
+    private let usesLiquidGlass = ProxyBarPlatformFeatures.usesLiquidGlass()
+    private var glassEffectView: NSView?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureBackground()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(calibratedWhite: 0.105, alpha: 0.98).setFill()
-        bounds.fill()
+        guard !usesLiquidGlass else {
+            return
+        }
+
+        //NSColor(calibratedWhite: 0.05, alpha: 0.08).setFill()
+        //bounds.fill()
 
         glowColor.setFill()
         let glow = NSBezierPath(ovalIn: NSRect(x: bounds.midX - 90, y: -50, width: 180, height: 130))
         glow.fill()
+    }
+
+    private func configureBackground() {
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+
+        if usesLiquidGlass {
+            if #available(macOS 26.0, *) {
+                let glassView = NSGlassEffectView()
+                glassView.style = .clear
+                glassView.cornerRadius = 22
+                glassView.tintColor = liquidGlassTint
+                glassView.contentView = contentView
+                glassView.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(glassView)
+                glassEffectView = glassView
+
+                NSLayoutConstraint.activate([
+                    glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                    glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                    glassView.topAnchor.constraint(equalTo: topAnchor),
+                    glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+                    contentView.leadingAnchor.constraint(equalTo: glassView.leadingAnchor),
+                    contentView.trailingAnchor.constraint(equalTo: glassView.trailingAnchor),
+                    contentView.topAnchor.constraint(equalTo: glassView.topAnchor),
+                    contentView.bottomAnchor.constraint(equalTo: glassView.bottomAnchor)
+                ])
+                return
+            }
+        }
+
+        addSubview(contentView)
+        NSLayoutConstraint.activate([
+            contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    private func updateGlassTint() {
+        guard usesLiquidGlass else {
+            return
+        }
+
+        if #available(macOS 26.0, *), let glassEffectView = glassEffectView as? NSGlassEffectView {
+            glassEffectView.tintColor = liquidGlassTint
+        }
+    }
+
+    private var liquidGlassTint: NSColor {
+        let base = NSColor(calibratedWhite: 0.08, alpha: 0.08)
+        return base.blended(withFraction: 0.16, of: color(for: status)) ?? base
     }
 
     private var glowColor: NSColor {
@@ -498,6 +579,9 @@ private final class ProxyMarkView: NSView {
 
 @MainActor
 private final class StatusLightView: NSView {
+    private var blinkTimer: Timer?
+    private var isVisible = true
+
     var state: StatusIcon.State = .off {
         didSet { needsDisplay = true }
     }
