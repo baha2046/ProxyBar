@@ -128,6 +128,7 @@ final class ProxyStatusViewController: NSViewController {
 
         let labels = NSStackView(views: [titleLabel, detailLabel])
         labels.orientation = .vertical
+        labels.alignment = .leading
         labels.spacing = 1
 
         let brand = NSStackView(views: [mark, labels])
@@ -780,9 +781,9 @@ private func color(for state: StatusIcon.State) -> NSColor {
     switch state {
     case .running:
         return .systemGreen
+    case .standby, .working:
+        return .systemOrange
     case .off, .failed:
         return .systemRed
-    case .working:
-        return .systemOrange
     }
 }

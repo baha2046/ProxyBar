@@ -4,6 +4,7 @@ import AppKit
 enum StatusIcon {
     enum State {
         case running
+        case standby
         case off
         case working
         case failed
@@ -48,10 +49,10 @@ enum StatusIcon {
         switch state {
         case .running:
             return NSColor.systemGreen
+        case .standby, .working:
+            return NSColor.systemOrange
         case .off, .failed:
             return NSColor.systemRed
-        case .working:
-            return NSColor.systemOrange
         }
     }
 
@@ -59,6 +60,8 @@ enum StatusIcon {
         switch state {
         case .running:
             return "ProxyBar running"
+        case .standby:
+            return "ProxyBar standby"
         case .off:
             return "ProxyBar off"
         case .working:

@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.toolTip = "ProxyBar"
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
+        // Seed VPN status before starting the proxy so the initial routing
+        // decision (run vs. standby) reflects the live VPN state.
+        vpnStatus = VPNStatus.current()
         startProxyServer()
         startVPNStatusMonitoring()
         updateUI()
@@ -100,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try change()
             if proxyServer != nil {
                 try reloadProxyServer()
-                setRunningState()
+                establishRouting()
             } else {
                 proxyState = .off
             }
@@ -163,8 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let server = EmbeddedProxyServer(settings: settings, enableWireGuardWatcher: true)
             try server.start()
             proxyServer = server
-            try SystemActions(settings: settings).apply()
-            setRunningState()
+            establishRouting()
             ProxyBarLog.lifecycle.info("ProxyBar proxy server started successfully")
         } catch {
             proxyServer?.stop()
@@ -206,16 +208,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             proxyServer = server
         }
 
-        try SystemActions(settings: settings).apply()
+        // PAC state is reconciled by establishRouting() based on the current VPN
+        // status, so it is intentionally not applied here.
         ProxyBarLog.lifecycle.info("ProxyBar proxy settings reloaded successfully")
     }
 
-    private func setRunningState() {
+    /// The proxy server is up — sync the system PAC to the current VPN status
+    /// and set the matching UI state. When the VPN is connected, PAC is applied
+    /// and routing is active (`.running`). When the VPN is offline, PAC is
+    /// disabled and routing sits in `.standby` until the VPN returns.
+    private func establishRouting() {
         guard let proxyServer else {
             proxyState = .off
             return
         }
-        proxyState = .running(socksPort: proxyServer.boundSOCKSPort, pacPort: proxyServer.boundPACPort)
+
+        let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
+        let actions = SystemActions(settings: settings)
+        let socksPort = proxyServer.boundSOCKSPort
+        let pacPort = proxyServer.boundPACPort
+
+        do {
+            if vpnStatus.isConnected {
+                try actions.apply()
+                proxyState = .running(socksPort: socksPort, pacPort: pacPort)
+                ProxyBarLog.lifecycle.info("ProxyBar routing enabled (VPN connected)")
+            } else {
+                try actions.disableAutoProxy()
+                proxyState = .standby(socksPort: socksPort, pacPort: pacPort)
+                ProxyBarLog.lifecycle.info("ProxyBar entering standby (VPN offline, PAC disabled)")
+            }
+        } catch {
+            proxyState = .failed(Self.message(for: error))
+            ProxyBarLog.lifecycle.error("ProxyBar routing sync failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func startVPNStatusMonitoring() {
@@ -228,8 +254,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshVPNStatus() {
+        let previous = vpnStatus
         vpnStatus = VPNStatus.current()
+
+        // When routing is active or standing by, a VPN change must reconcile the
+        // system PAC: offline → standby (PAC off), online → running (PAC on).
+        if let proxyServer, case .running = proxyState, !vpnStatus.isConnected {
+            ProxyBarLog.lifecycle.info("VPN disconnected while routing — entering standby")
+            let socksPort = proxyServer.boundSOCKSPort
+            let pacPort = proxyServer.boundPACPort
+            disablePACQuietly()
+            proxyState = .standby(socksPort: socksPort, pacPort: pacPort)
+        } else if case .standby = proxyState, vpnStatus.isConnected {
+            ProxyBarLog.lifecycle.info("VPN connected while standing by — resuming routing")
+            establishRouting()
+        }
+
+        if previous != vpnStatus {
+            ProxyBarLog.lifecycle.info("VPN status changed: \(previous.displayName) → \(self.vpnStatus.displayName)")
+        }
         updateUI()
+    }
+
+    private func disablePACQuietly() {
+        let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
+        do {
+            try SystemActions(settings: settings).disableAutoProxy()
+        } catch {
+            ProxyBarLog.lifecycle.error("Failed to disable PAC while entering standby: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func updateUI() {
@@ -245,6 +298,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .working
         case .running:
             return .running
+        case .standby:
+            return .standby
         case .off:
             return .off
         case .failed:
@@ -258,6 +313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "ProxyBar starting"
         case .running(let socksPort, let pacPort):
             return "ProxyBar running: SOCKS5 \(socksPort), PAC \(pacPort)"
+        case .standby(let socksPort, let pacPort):
+            return "ProxyBar standby: VPN offline (SOCKS5 \(socksPort), PAC \(pacPort) disabled)"
         case .stopping:
             return "ProxyBar stopping"
         case .off:
@@ -289,6 +346,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return ProxyStatusViewModel(
                 title: "Routing Enabled",
                 detail: "PAC installed on Wi-Fi at \(Self.shortTime())",
+                status: status,
+                isOn: true,
+                socksPort: socksPort,
+                pacPort: pacPort,
+                domainCount: domains.count,
+                domains: domains,
+                vpnStatus: vpnStatus,
+                errorMessage: nil,
+                openAtLogin: LoginItem.isEnabled
+            )
+        case .standby(let socksPort, let pacPort):
+            return ProxyStatusViewModel(
+                title: "Standby",
+                detail: "VPN offline — PAC disabled, will resume when VPN connects",
                 status: status,
                 isOn: true,
                 socksPort: socksPort,
@@ -361,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum ProxyUIState {
         case starting
         case running(socksPort: UInt16, pacPort: UInt16)
+        case standby(socksPort: UInt16, pacPort: UInt16)
         case stopping
         case off
         case failed(String)
