@@ -19,7 +19,11 @@ struct ProxyBarCoreTests {
         try testRefreshPACUsesValidNetworksetupArguments()
         try testApplyRefreshesPACWithoutLaunchctl()
         try testDisableAutoProxyUsesNetworksetup()
+        testProxyPopoverCardsFitContentWidth()
         testLiquidGlassRequiresMacOS26()
+        testVPNStatusParsesConnectedService()
+        testVPNStatusParsesDisconnectedServices()
+        testVPNStatusUsesFirstConnectedService()
         try await testPACHTTPServerServesProxyPAC()
         try testPACHTTPServerReportsOccupiedPort()
         try testSOCKS5ServerReportsOccupiedPort()
@@ -107,6 +111,20 @@ struct ProxyBarCoreTests {
 
         let direct = PACGenerator.generate(domains: [], socksPort: 1088)
         expect(!direct.contains("SOCKS5"), "Expected empty domains to render DIRECT-only PAC")
+    }
+
+    private static func testProxyPopoverCardsFitContentWidth() {
+        let metrics = ProxyPopoverLayoutMetrics(
+            panelWidth: 440,
+            horizontalInset: 18,
+            cardSpacing: 10,
+            cardCount: 3
+        )
+
+        expectEqual(metrics.contentWidth, 404)
+        expectEqual(metrics.cardWidth, 127)
+        expectEqual(metrics.cardsTotalWidth, 401)
+        expect(metrics.cardsTotalWidth <= metrics.contentWidth, "Expected status cards to fit within popover content width")
     }
 
     private static func testReplacesOnlyDomainBlock() throws {
@@ -206,6 +224,37 @@ struct ProxyBarCoreTests {
         expect(!ProxyBarPlatformFeatures.usesLiquidGlass(on: OperatingSystemVersion(majorVersion: 25, minorVersion: 9, patchVersion: 0)), "Expected macOS 25 to keep the legacy background")
         expect(ProxyBarPlatformFeatures.usesLiquidGlass(on: OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)), "Expected macOS 26 to enable Liquid Glass")
         expect(ProxyBarPlatformFeatures.usesLiquidGlass(on: OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)), "Expected macOS 27 to keep Liquid Glass enabled")
+    }
+
+    private static func testVPNStatusParsesConnectedService() {
+        let output = """
+        Available network connection services in the current set (*=enabled):
+        * (Connected)   A1B2C3D4-E5F6-47AA-8888-999999999999 "Work VPN" [VPN]
+        * (Disconnected) 11111111-2222-3333-4444-555555555555 "Personal VPN" [VPN]
+        """
+
+        expectEqual(VPNStatus.parseScutilNCList(output), .connected(name: "Work VPN"))
+    }
+
+    private static func testVPNStatusParsesDisconnectedServices() {
+        let output = """
+        Available network connection services in the current set (*=enabled):
+        * (Disconnected) A1B2C3D4-E5F6-47AA-8888-999999999999 "Work VPN" [VPN]
+        * (Disconnected) 11111111-2222-3333-4444-555555555555 "Personal VPN" [VPN]
+        """
+
+        expectEqual(VPNStatus.parseScutilNCList(output), .disconnected)
+    }
+
+    private static func testVPNStatusUsesFirstConnectedService() {
+        let output = """
+        Available network connection services in the current set (*=enabled):
+        * (Disconnected) 11111111-2222-3333-4444-555555555555 "Personal VPN" [VPN]
+        * (Connected)   A1B2C3D4-E5F6-47AA-8888-999999999999 "Work VPN" [VPN]
+        * (Connected)   99999999-8888-7777-6666-555555555555 "Backup VPN" [VPN]
+        """
+
+        expectEqual(VPNStatus.parseScutilNCList(output), .connected(name: "Work VPN"))
     }
 
     private static func testPACHTTPServerServesProxyPAC() async throws {

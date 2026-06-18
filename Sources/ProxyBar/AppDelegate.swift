@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popoverController = ProxyStatusViewController()
     private var proxyServer: EmbeddedProxyServer?
     private var proxyState = ProxyUIState.off
+    private var vpnStatus = VPNStatus.disconnected
+    private var vpnRefreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProxyBarDiagnostics.install()
@@ -21,11 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         startProxyServer()
+        startVPNStatusMonitoring()
         updateUI()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         ProxyBarLog.lifecycle.info("ProxyBar application will terminate")
+        vpnRefreshTimer?.invalidate()
         proxyServer?.stop()
     }
 
@@ -85,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            updateUI()
+            refreshVPNStatus()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
@@ -214,6 +218,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         proxyState = .running(socksPort: proxyServer.boundSOCKSPort, pacPort: proxyServer.boundPACPort)
     }
 
+    private func startVPNStatusMonitoring() {
+        refreshVPNStatus()
+        vpnRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshVPNStatus()
+            }
+        }
+    }
+
+    private func refreshVPNStatus() {
+        vpnStatus = VPNStatus.current()
+        updateUI()
+    }
+
     private func updateUI() {
         let status = statusIconState
         statusItem.button?.image = StatusIcon.make(state: status)
@@ -263,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: nil,
                 domainCount: domains.count,
                 domains: domains,
+                vpnStatus: vpnStatus,
                 errorMessage: nil,
                 openAtLogin: LoginItem.isEnabled
             )
@@ -276,6 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: pacPort,
                 domainCount: domains.count,
                 domains: domains,
+                vpnStatus: vpnStatus,
                 errorMessage: nil,
                 openAtLogin: LoginItem.isEnabled
             )
@@ -289,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: proxyServer?.boundPACPort,
                 domainCount: domains.count,
                 domains: domains,
+                vpnStatus: vpnStatus,
                 errorMessage: nil,
                 openAtLogin: LoginItem.isEnabled
             )
@@ -302,6 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: nil,
                 domainCount: domains.count,
                 domains: domains,
+                vpnStatus: vpnStatus,
                 errorMessage: nil,
                 openAtLogin: LoginItem.isEnabled
             )
@@ -315,6 +337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: proxyServer?.boundPACPort,
                 domainCount: domains.count,
                 domains: domains,
+                vpnStatus: vpnStatus,
                 errorMessage: message,
                 openAtLogin: LoginItem.isEnabled
             )

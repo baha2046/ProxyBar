@@ -11,6 +11,7 @@ struct ProxyStatusViewModel {
     var pacPort: UInt16?
     var domainCount: Int
     var domains: [String]
+    var vpnStatus: VPNStatus
     var errorMessage: String?
     var openAtLogin: Bool
 }
@@ -31,6 +32,7 @@ final class ProxyStatusViewController: NSViewController {
     private let detailLabel = NSTextField(labelWithString: "")
     private let proxySwitch = NSSwitch()
     private let activityView = ActivityStripView()
+    private let vpnCard = StatusCardView(title: "VPN", showsIndicator: true)
     private let socksCard = StatusCardView(title: "SOCKS5")
     private let pacCard = StatusCardView(title: "PAC")
     private let domainsCard = StatusCardView(title: "Domains")
@@ -38,24 +40,35 @@ final class ProxyStatusViewController: NSViewController {
     private let errorCard = ErrorCardView()
     private let loginButton = NSButton(title: "Open at Login", target: nil, action: nil)
 
+    private let layoutMetrics = ProxyPopoverLayoutMetrics(
+        panelWidth: 440,
+        horizontalInset: 18,
+        cardSpacing: 10,
+        cardCount: 3
+    )
     private var isUpdatingSwitch = false
 
     override func loadView() {
-        preferredContentSize = NSSize(width: 440, height: 748)
+        preferredContentSize = NSSize(width: layoutMetrics.panelWidth, height: 748)
         view = root
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.widthAnchor.constraint(equalToConstant: 440).isActive = true
+        view.widthAnchor.constraint(equalToConstant: CGFloat(layoutMetrics.panelWidth)).isActive = true
 
         let header = makeHeader()
         let stateBlock = makeStateBlock()
         let cards = makeCards()
         let actions = makeActions()
 
-        let stack = NSStackView(views: [header, stateBlock, activityView, cards, domainList, errorCard, actions])
+        let stack = NSStackView(views: [header, stateBlock, vpnCard, activityView, cards, domainList, errorCard, actions])
         stack.orientation = .vertical
         stack.distribution = .fill
         stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 16, right: 18)
+        stack.edgeInsets = NSEdgeInsets(
+            top: 18,
+            left: CGFloat(layoutMetrics.horizontalInset),
+            bottom: 16,
+            right: CGFloat(layoutMetrics.horizontalInset)
+        )
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         // Let the domain list absorb any leftover vertical space so the panel
@@ -65,7 +78,7 @@ final class ProxyStatusViewController: NSViewController {
 
         root.contentView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.widthAnchor.constraint(equalToConstant: 440),
+            stack.widthAnchor.constraint(equalToConstant: CGFloat(layoutMetrics.panelWidth)),
             stack.leadingAnchor.constraint(equalTo: root.contentView.leadingAnchor, constant: 14),
             stack.trailingAnchor.constraint(equalTo: root.contentView.trailingAnchor, constant: -14),
             stack.topAnchor.constraint(equalTo: root.contentView.topAnchor),
@@ -85,12 +98,10 @@ final class ProxyStatusViewController: NSViewController {
         proxySwitch.isEnabled = model.status != .working
         isUpdatingSwitch = false
 
-        NSLayoutConstraint.activate([
-            socksCard.widthAnchor.constraint(equalToConstant: 127),
-            pacCard.widthAnchor.constraint(equalToConstant: 127),
-            domainsCard.widthAnchor.constraint(equalToConstant: 127)
-        ])
-
+        vpnCard.update(
+            value: model.vpnStatus.displayName,
+            status: model.vpnStatus.isConnected ? .running : .failed
+        )
         socksCard.update(value: model.socksPort.map { "127.0.0.1:\($0)" } ?? "Stopped", status: model.status)
         pacCard.update(value: model.pacPort.map { "127.0.0.1:\($0)" } ?? "Stopped", status: model.status)
         domainsCard.update(value: "\(model.domainCount) rules", status: model.status)
@@ -178,7 +189,14 @@ final class ProxyStatusViewController: NSViewController {
         let stack = NSStackView(views: [socksCard, pacCard, domainsCard])
         stack.orientation = .horizontal
         stack.distribution = .fillEqually
-        stack.spacing = 10
+        stack.spacing = CGFloat(layoutMetrics.cardSpacing)
+
+        let cardWidth = CGFloat(layoutMetrics.cardWidth)
+        NSLayoutConstraint.activate([
+            socksCard.widthAnchor.constraint(equalToConstant: cardWidth),
+            pacCard.widthAnchor.constraint(equalToConstant: cardWidth),
+            domainsCard.widthAnchor.constraint(equalToConstant: cardWidth)
+        ])
         return stack
     }
 
@@ -651,8 +669,9 @@ private final class ActivityStripView: NSView {
 private final class StatusCardView: NSView {
     private let titleLabel: NSTextField
     private let valueLabel = NSTextField(labelWithString: "")
+    private let indicatorView = StatusLightView()
 
-    init(title: String) {
+    init(title: String, showsIndicator: Bool = false) {
         titleLabel = NSTextField(labelWithString: title)
         super.init(frame: .zero)
 
@@ -662,7 +681,19 @@ private final class StatusCardView: NSView {
         valueLabel.textColor = .labelColor
         valueLabel.lineBreakMode = .byTruncatingMiddle
 
-        let stack = NSStackView(views: [titleLabel, valueLabel])
+        indicatorView.isHidden = !showsIndicator
+        indicatorView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            indicatorView.widthAnchor.constraint(equalToConstant: 8),
+            indicatorView.heightAnchor.constraint(equalToConstant: 8)
+        ])
+
+        let titleRow = NSStackView(views: [titleLabel, NSView(), indicatorView])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 6
+
+        let stack = NSStackView(views: [titleRow, valueLabel])
         stack.orientation = .vertical
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -686,6 +717,7 @@ private final class StatusCardView: NSView {
     func update(value: String, status: StatusIcon.State) {
         valueLabel.stringValue = value
         valueLabel.textColor = status == .failed ? .systemRed : .labelColor
+        indicatorView.state = status
         needsDisplay = true
     }
 
