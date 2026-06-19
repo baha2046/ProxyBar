@@ -1,5 +1,6 @@
 .build/
 .swiftpm/
 .superpowers/
+dist/
 .DS_Store
 .idea

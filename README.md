@@ -15,6 +15,12 @@ http://127.0.0.1:1081/proxy.pac
 If `[proxy].socks_port` or `[proxy].pac_port` are set in
 `~/.config/crabbyproxy/config.toml`, ProxyBar uses those ports instead.
 
+## Screenshots
+
+| Routing enabled | VPN standby |
+| --- | --- |
+| ![ProxyBar running with routing enabled](docs/screenshots/screen_running.png) | ![ProxyBar in standby while VPN is disconnected](docs/screenshots/screen_standby.png) |
+
 ## Features
 
 - Menu bar controls for starting, stopping, and inspecting local proxy routing.
@@ -122,6 +128,18 @@ servers = [
 If the config file is missing or cannot be parsed for runtime settings,
 ProxyBar falls back to built-in crabbyproxy-style defaults.
 
+## Install
+
+Install ProxyBar with Homebrew:
+
+```sh
+brew install --cask baha2046/proxybar/proxybar
+```
+
+Or download `ProxyBar-1.0.0.zip` from the
+[GitHub Releases](https://github.com/baha2046/ProxyBar/releases) page, unzip it,
+and move `ProxyBar.app` to `/Applications`.
+
 ## Build
 
 Run the core behavior tests:
@@ -136,16 +154,17 @@ Build the release binary:
 swift build -c release --product ProxyBar
 ```
 
-Create the app bundle:
+Create the app bundle and release zip:
 
 ```sh
-scripts/package-app.sh
+scripts/package-app.sh 1.0.0
 ```
 
-The app bundle is written to:
+The app bundle and release archive are written to:
 
 ```text
 .build/ProxyBar.app
+dist/ProxyBar-1.0.0.zip
 ```
 
 ## Use

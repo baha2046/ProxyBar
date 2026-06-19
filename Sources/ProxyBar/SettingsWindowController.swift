@@ -40,13 +40,14 @@ private final class SettingsViewController: NSViewController {
 
     private let scopeControl = NSSegmentedControl(labels: ProxyNetworkScope.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let loginSwitch = NSSwitch()
+    private let versionLabel = NSTextField(labelWithString: AppVersionDisplay.string())
     private var isUpdating = false
 
     override func loadView() {
         view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.widthAnchor.constraint(equalToConstant: 360).isActive = true
-        view.heightAnchor.constraint(equalToConstant: 190).isActive = true
+        view.heightAnchor.constraint(equalToConstant: 220).isActive = true
 
         let title = NSTextField(labelWithString: "Settings")
         title.font = .systemFont(ofSize: 20, weight: .bold)
@@ -77,10 +78,13 @@ private final class SettingsViewController: NSViewController {
         loginRow.alignment = .centerY
         loginRow.spacing = 12
 
-        let stack = NSStackView(views: [title, scopeStack, loginRow])
+        versionLabel.font = .systemFont(ofSize: 12)
+        versionLabel.textColor = .tertiaryLabelColor
+
+        let stack = NSStackView(views: [title, scopeStack, loginRow, versionLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 22
+        stack.spacing = 18
         stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
         stack.translatesAutoresizingMaskIntoConstraints = false
 

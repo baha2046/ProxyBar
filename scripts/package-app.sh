@@ -2,20 +2,24 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="${1:-1.0.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APP_DIR="$ROOT_DIR/.build/ProxyBar.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+DIST_DIR="$ROOT_DIR/dist"
+ZIP_PATH="$DIST_DIR/ProxyBar-$VERSION.zip"
 
 cd "$ROOT_DIR"
 swift build -c release --product ProxyBar
 
-rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+rm -rf "$APP_DIR" "$ZIP_PATH"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$DIST_DIR"
 cp "$ROOT_DIR/.build/release/ProxyBar" "$MACOS_DIR/ProxyBar"
 swift run -c release IconGenerator "$RESOURCES_DIR/AppIcon.icns"
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -31,9 +35,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
@@ -42,4 +46,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+/usr/bin/ditto -c -k --norsrc --keepParent "$APP_DIR" "$ZIP_PATH"
+
 echo "Created $APP_DIR"
+echo "Created $ZIP_PATH"
+echo "SHA-256:"
+/usr/bin/shasum -a 256 "$ZIP_PATH"

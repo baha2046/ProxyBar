@@ -14,6 +14,7 @@ struct ProxyBarCoreTests {
         try testParsesProxySettings()
         try testUsesCrabbyDefaultsWhenConfigIsMissing()
         try testConfigStoreCreatesMissingConfigFromSample()
+        testAppVersionDisplayUsesShortVersionAndBuildNumber()
         testGeneratesPACFromSettings()
         try testReplacesOnlyDomainBlock()
         try testMissingDomainBlockReportsError()
@@ -129,6 +130,16 @@ struct ProxyBarCoreTests {
         expectEqual(settings.socksPort, 1080)
         expectEqual(settings.pacPort, 1081)
         expect(settings.dohServers.contains("https://1.1.1.1/dns-query"), "Expected seeded config to include sample DoH servers")
+    }
+
+    private static func testAppVersionDisplayUsesShortVersionAndBuildNumber() {
+        let display = AppVersionDisplay.string(info: [
+            "CFBundleShortVersionString": "1.0.0",
+            "CFBundleVersion": "7"
+        ])
+
+        expectEqual(display, "Version 1.0.0 (Build 7)")
+        expectEqual(AppVersionDisplay.string(info: [:]), "Version unknown")
     }
 
     private static func testGeneratesPACFromSettings() {
