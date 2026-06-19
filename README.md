@@ -5,6 +5,16 @@ crabbyproxy-compatible configuration file, starts local SOCKS5 and PAC servers,
 and applies macOS automatic proxy settings to Wi-Fi, LAN, or both only while a
 VPN is connected.
 
+Built for WireGuard on macOS, where the Network Extension intercepts all packets before the routing table — making traditional split tunneling unreliable for domain-based exclusions.
+
+<p>
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="MIT Licence">
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?style=flat-square&logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-arm64-success?style=flat-square" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift 6">
+  <img src="https://img.shields.io/badge/Liquid%20Glass-macOS%2026-7c6cff?style=flat-square" alt="Liquid Glass">
+</p>
+
 The default local endpoints are:
 
 ```text
@@ -38,6 +48,18 @@ If `[proxy].socks_port` or `[proxy].pac_port` are set in
   adapters and Thunderbolt Ethernet.
 - Open-at-login support through `SMAppService`.
 - Diagnostic logging through macOS unified logging.
+
+## Credits
+
+ProxyBar is base on the idea of **[crabbyproxy](https://github.com/digital-shokunin/crabbyproxy)** .
+
+## How it works
+
+1. Browser PAC file routes target domains to the local SOCKS5 proxy
+2. Proxy resolves DNS via DoH — bypasses VPN DNS, gets geo-correct CDN IPs
+3. Proxy binds outgoing sockets to the physical interface (`IP_BOUND_IF`)
+4. macOS honors the binding even with VPN active — traffic goes direct
+5. All other traffic goes through the VPN as normal
 
 ## 機能説明
 
@@ -134,6 +156,7 @@ Install ProxyBar with Homebrew:
 
 ```sh
 brew install --cask baha2046/proxybar/proxybar
+xattr -dr com.apple.quarantine /Applications/ProxyBar.app
 ```
 
 Or download `ProxyBar-1.0.1.zip` from the
