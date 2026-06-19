@@ -136,9 +136,10 @@ Install ProxyBar with Homebrew:
 brew install --cask baha2046/proxybar/proxybar
 ```
 
-Or download `ProxyBar-1.0.0.zip` from the
+Or download `ProxyBar-1.0.1.zip` from the
 [GitHub Releases](https://github.com/baha2046/ProxyBar/releases) page, unzip it,
-and move `ProxyBar.app` to `/Applications`.
+and move `ProxyBar.app` to `/Applications`. Homebrew is recommended because the
+release is ad-hoc signed for personal distribution.
 
 ## Build
 
@@ -157,14 +158,14 @@ swift build -c release --product ProxyBar
 Create the app bundle and release zip:
 
 ```sh
-scripts/package-app.sh 1.0.0
+scripts/package-app.sh 1.0.1
 ```
 
 The app bundle and release archive are written to:
 
 ```text
 .build/ProxyBar.app
-dist/ProxyBar-1.0.0.zip
+dist/ProxyBar-1.0.1.zip
 ```
 
 ## Use

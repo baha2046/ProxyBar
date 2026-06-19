@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.0.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 APP_DIR="$ROOT_DIR/.build/ProxyBar.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -46,9 +47,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
+/usr/bin/codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
 /usr/bin/ditto -c -k --norsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 
 echo "Created $APP_DIR"
 echo "Created $ZIP_PATH"
+echo "Signed with identity: $SIGNING_IDENTITY"
 echo "SHA-256:"
 /usr/bin/shasum -a 256 "$ZIP_PATH"
