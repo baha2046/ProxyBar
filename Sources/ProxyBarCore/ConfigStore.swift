@@ -2,6 +2,42 @@ import Foundation
 
 public final class ConfigStore {
     public let configURL: URL
+    public static let sampleConfigText = """
+    [proxy]
+    socks_port = 1080
+    pac_port = 1081
+    domains = [
+        "*.youtube.com",
+        "youtube.com",
+        "*.googlevideo.com",
+        "*.ytimg.com",
+        "*.youtube-nocookie.com",
+        "youtube-nocookie.com",
+        "*.ggpht.com",
+        "*.googleapis.com",
+        "*.reddit.com",
+        "reddit.com",
+        "*.redd.it",
+        "*.redditstatic.com",
+        "*.hulu.com",
+        "hulu.com",
+        "*.hulustream.com",
+        "*.huluim.com",
+        "*.netflix.com",
+        "netflix.com",
+        "*.nflxvideo.net",
+        "*.nflximg.net",
+        "*.nflxso.net",
+        "*.nflxext.com"
+    ]
+
+    [doh]
+    servers = [
+        "https://1.1.1.1/dns-query",
+        "https://8.8.8.8/dns-query",
+        "https://9.9.9.9:5053/dns-query"
+    ]
+    """
 
     public init(configURL: URL = ConfigStore.defaultConfigURL()) {
         self.configURL = configURL
@@ -46,8 +82,22 @@ public final class ConfigStore {
     }
 
     private func loadDocument() throws -> ConfigDocument {
+        try ensureConfigExists()
         let text = try String(contentsOf: configURL, encoding: .utf8)
         return try ConfigDocument(text: text)
+    }
+
+    private func ensureConfigExists() throws {
+        let fileManager = FileManager.default
+        guard !fileManager.fileExists(atPath: configURL.path) else {
+            return
+        }
+
+        try fileManager.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Self.sampleConfigText.write(to: configURL, atomically: true, encoding: .utf8)
     }
 
     private func backupAndWrite(document: ConfigDocument, domains: [String]) throws {

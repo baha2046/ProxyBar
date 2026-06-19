@@ -13,6 +13,7 @@ struct ProxyBarCoreTests {
         try testExtractsDomains()
         try testParsesProxySettings()
         try testUsesCrabbyDefaultsWhenConfigIsMissing()
+        try testConfigStoreCreatesMissingConfigFromSample()
         testGeneratesPACFromSettings()
         try testReplacesOnlyDomainBlock()
         try testMissingDomainBlockReportsError()
@@ -108,6 +109,24 @@ struct ProxyBarCoreTests {
         expectEqual(settings.pacPort, 1081)
         expect(settings.dohServers.contains("https://1.1.1.1/dns-query"), "Expected Cloudflare DoH default")
         expect(settings.domains.contains("youtube.com"), "Expected crabbyproxy default domains")
+    }
+
+    private static func testConfigStoreCreatesMissingConfigFromSample() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("proxybar-config-store-\(UUID().uuidString)", isDirectory: true)
+        let configURL = root
+            .appendingPathComponent("crabbyproxy", isDirectory: true)
+            .appendingPathComponent("config.toml")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let domains = try ConfigStore(configURL: configURL).loadDomains()
+
+        expect(FileManager.default.fileExists(atPath: configURL.path), "Expected missing config.toml to be created")
+        expect(domains.contains("youtube.com"), "Expected seeded config to include sample domains")
+        let settings = CrabbyProxyConfigParser.load(from: configURL)
+        expectEqual(settings.socksPort, 1080)
+        expectEqual(settings.pacPort, 1081)
+        expect(settings.dohServers.contains("https://1.1.1.1/dns-query"), "Expected seeded config to include sample DoH servers")
     }
 
     private static func testGeneratesPACFromSettings() {

@@ -1,0 +1,34 @@
+[proxy]
+socks_port = 1080
+pac_port = 1081
+domains = [
+    "*.youtube.com",
+    "youtube.com",
+    "*.googlevideo.com",
+    "*.ytimg.com",
+    "*.youtube-nocookie.com",
+    "youtube-nocookie.com",
+    "*.ggpht.com",
+    "*.googleapis.com",
+    "*.reddit.com",
+    "reddit.com",
+    "*.redd.it",
+    "*.redditstatic.com",
+    "*.hulu.com",
+    "hulu.com",
+    "*.hulustream.com",
+    "*.huluim.com",
+    "*.netflix.com",
+    "netflix.com",
+    "*.nflxvideo.net",
+    "*.nflximg.net",
+    "*.nflxso.net",
+    "*.nflxext.com"
+]
+
+[doh]
+servers = [
+    "https://1.1.1.1/dns-query",
+    "https://8.8.8.8/dns-query",
+    "https://9.9.9.9:5053/dns-query"
+]
