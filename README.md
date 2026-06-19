@@ -159,7 +159,7 @@ brew install --cask baha2046/proxybar/proxybar
 xattr -dr com.apple.quarantine /Applications/ProxyBar.app
 ```
 
-Or download `ProxyBar-1.0.1.zip` from the
+Or download `ProxyBar-1.0.2.zip` from the
 [GitHub Releases](https://github.com/baha2046/ProxyBar/releases) page, unzip it,
 and move `ProxyBar.app` to `/Applications`. Homebrew is recommended because the
 release is ad-hoc signed for personal distribution.
@@ -181,14 +181,14 @@ swift build -c release --product ProxyBar
 Create the app bundle and release zip:
 
 ```sh
-scripts/package-app.sh 1.0.1
+scripts/package-app.sh 1.0.2
 ```
 
 The app bundle and release archive are written to:
 
 ```text
 .build/ProxyBar.app
-dist/ProxyBar-1.0.1.zip
+dist/ProxyBar-1.0.2.zip
 ```
 
 ## Use

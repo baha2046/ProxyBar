@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-1.0.1}"
+VERSION="${1:-1.0.2}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 APP_DIR="$ROOT_DIR/.build/ProxyBar.app"
