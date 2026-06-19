@@ -6,15 +6,17 @@ public final class SOCKS5Server: @unchecked Sendable {
 
     private let settings: ProxySettings
     private let resolver: DoHResolver
+    private let requestActivity: RequestActivityTimeline?
     private let queue = DispatchQueue(label: "ProxyBar.SOCKS5Server")
     private let connectionIDLock = NSLock()
     private var socketDescriptor: Int32 = -1
     private var isRunning = false
     private var nextConnectionID: UInt64 = 1
 
-    public init(settings: ProxySettings) {
+    public init(settings: ProxySettings, requestActivity: RequestActivityTimeline? = nil) {
         self.settings = settings
         self.resolver = DoHResolver(servers: settings.dohServers)
+        self.requestActivity = requestActivity
         self.boundPort = settings.socksPort
     }
 
@@ -112,6 +114,7 @@ public final class SOCKS5Server: @unchecked Sendable {
             _ = writeBytes([0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0], to: client)
             return
         }
+        requestActivity?.record()
         ProxyBarLog.socks.info("SOCKS5 #\(connectionID, privacy: .public) requested \(destination.host, privacy: .public):\(destination.port, privacy: .public)")
 
         let remoteHost: String

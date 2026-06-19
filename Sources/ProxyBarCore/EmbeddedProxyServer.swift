@@ -4,6 +4,7 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
     public private(set) var settings: ProxySettings
     public private(set) var boundPACPort: UInt16 = 0
     public private(set) var boundSOCKSPort: UInt16 = 0
+    public let requestActivity: RequestActivityTimeline
 
     private let enableWireGuardWatcher: Bool
     private var pacServer: PACHTTPServer?
@@ -11,9 +12,14 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
     private var wireGuardWatcher: WireGuardProxyWatcher?
     private let lock = NSLock()
 
-    public init(settings: ProxySettings, enableWireGuardWatcher: Bool = false) {
+    public init(
+        settings: ProxySettings,
+        enableWireGuardWatcher: Bool = false,
+        requestActivity: RequestActivityTimeline = RequestActivityTimeline()
+    ) {
         self.settings = settings
         self.enableWireGuardWatcher = enableWireGuardWatcher
+        self.requestActivity = requestActivity
     }
 
     deinit {
@@ -66,7 +72,7 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
 
     private func startLocked(settings: ProxySettings) throws {
         ProxyBarLog.lifecycle.info("Starting embedded proxy servers with requested SOCKS5 port \(settings.socksPort, privacy: .public), PAC port \(settings.pacPort, privacy: .public)")
-        let socks = SOCKS5Server(settings: settings)
+        let socks = SOCKS5Server(settings: settings, requestActivity: requestActivity)
         try socks.start()
 
         let pac = PACHTTPServer(

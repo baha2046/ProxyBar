@@ -11,6 +11,7 @@ struct ProxyStatusViewModel {
     var pacPort: UInt16?
     var domainCount: Int
     var domains: [String]
+    var requestCountsPerMinute: [Int]
     var vpnStatus: VPNStatus
     var errorMessage: String?
 }
@@ -90,6 +91,7 @@ final class ProxyStatusViewController: NSViewController {
         statusLight.state = model.status
         root.status = model.status
         activityView.status = model.status
+        activityView.requestCounts = model.requestCountsPerMinute
 
         isUpdatingSwitch = true
         proxySwitch.state = model.isOn ? .on : .off
@@ -631,7 +633,9 @@ private final class ActivityStripView: NSView {
         didSet { needsDisplay = true }
     }
 
-    private let heights: [CGFloat] = [0.24, 0.55, 0.34, 0.72, 0.42, 0.88, 0.64, 0.35, 0.76, 0.48, 0.28, 0.58]
+    var requestCounts: [Int] = Array(repeating: 0, count: 12) {
+        didSet { needsDisplay = true }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -652,11 +656,18 @@ private final class ActivityStripView: NSView {
 
         let color = color(for: status)
         let gap: CGFloat = 6
-        let barWidth = (bounds.width - CGFloat(heights.count + 1) * gap) / CGFloat(heights.count)
-        for (index, heightRatio) in heights.enumerated() {
-            let height = max(7, (bounds.height - 18) * heightRatio)
+        let counts = requestCounts.isEmpty ? [0] : requestCounts
+        let maximum = counts.max() ?? 0
+        let barWidth = (bounds.width - CGFloat(counts.count + 1) * gap) / CGFloat(counts.count)
+
+        for (index, count) in counts.enumerated() {
+            let heightRatio = maximum == 0 ? 0 : CGFloat(count) / CGFloat(maximum)
+            let height = heightRatio == 0 ? 0 : max(7, (bounds.height - 18) * heightRatio)
             let x = gap + CGFloat(index) * (barWidth + gap)
             let rect = NSRect(x: x, y: bounds.height - height - 8, width: barWidth, height: height)
+            guard height > 0 else {
+                continue
+            }
             color.withAlphaComponent(status == .off ? 0.28 : 0.86).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
         }

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private let popoverController = ProxyStatusViewController()
     private let settingsWindowController = SettingsWindowController()
+    private let requestActivity = RequestActivityTimeline()
     private var proxyServer: EmbeddedProxyServer?
     private var proxyState = ProxyUIState.off
     private var vpnStatus = VPNStatus.disconnected
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProxyBarLog.lifecycle.info("ProxyBar application will terminate")
         vpnRefreshTimer?.invalidate()
         proxyServer?.stop()
+        requestActivity.reset()
     }
 
     @objc private func addDomain() {
@@ -205,7 +207,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
-            let server = EmbeddedProxyServer(settings: settings, enableWireGuardWatcher: true)
+            requestActivity.reset()
+            let server = EmbeddedProxyServer(
+                settings: settings,
+                enableWireGuardWatcher: true,
+                requestActivity: requestActivity
+            )
             try server.start()
             proxyServer = server
             establishRouting()
@@ -225,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         proxyServer?.stop()
         proxyServer = nil
+        requestActivity.reset()
 
         if disableSystemProxy {
             do {
@@ -245,7 +253,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let proxyServer {
             try proxyServer.reload(settings: settings)
         } else {
-            let server = EmbeddedProxyServer(settings: settings, enableWireGuardWatcher: true)
+            let server = EmbeddedProxyServer(
+                settings: settings,
+                enableWireGuardWatcher: true,
+                requestActivity: requestActivity
+            )
             try server.start()
             proxyServer = server
         }
@@ -372,6 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func viewModel(status: StatusIcon.State) -> ProxyStatusViewModel {
         let domains = (try? DomainRules.dedupedAndSorted(configStore.loadDomains())) ?? []
+        let requestCounts = proxyServer == nil ? Array(repeating: 0, count: requestActivity.bucketCount) : requestActivity.counts()
 
         switch proxyState {
         case .starting:
@@ -384,6 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: nil,
                 domainCount: domains.count,
                 domains: domains,
+                requestCountsPerMinute: requestCounts,
                 vpnStatus: vpnStatus,
                 errorMessage: nil
             )
@@ -397,6 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: pacPort,
                 domainCount: domains.count,
                 domains: domains,
+                requestCountsPerMinute: requestCounts,
                 vpnStatus: vpnStatus,
                 errorMessage: nil
             )
@@ -410,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: pacPort,
                 domainCount: domains.count,
                 domains: domains,
+                requestCountsPerMinute: requestCounts,
                 vpnStatus: vpnStatus,
                 errorMessage: nil
             )
@@ -423,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: proxyServer?.boundPACPort,
                 domainCount: domains.count,
                 domains: domains,
+                requestCountsPerMinute: requestCounts,
                 vpnStatus: vpnStatus,
                 errorMessage: nil
             )
@@ -436,6 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: nil,
                 domainCount: domains.count,
                 domains: domains,
+                requestCountsPerMinute: requestCounts,
                 vpnStatus: vpnStatus,
                 errorMessage: nil
             )
@@ -449,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pacPort: proxyServer?.boundPACPort,
                 domainCount: domains.count,
                 domains: domains,
+                requestCountsPerMinute: requestCounts,
                 vpnStatus: vpnStatus,
                 errorMessage: message
             )

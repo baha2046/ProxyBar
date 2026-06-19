@@ -32,10 +32,12 @@ struct ProxyBarCoreTests {
         testVPNStatusParsesConnectedService()
         testVPNStatusParsesDisconnectedServices()
         testVPNStatusUsesFirstConnectedService()
+        testRequestActivityTimelineBucketsRequestsByMinute()
         try await testPACHTTPServerServesProxyPAC()
         try testPACHTTPServerReportsOccupiedPort()
         try testSOCKS5ServerReportsOccupiedPort()
         try testSOCKS5ServerRejectsNonSocksGreeting()
+        try testSOCKS5ServerCountsValidConnectRequests()
         try testSOCKS5ServerHandlesFragmentedRequest()
         try await testEmbeddedProxyServerReloadsSettings()
         print("ProxyBarCoreTests passed")
@@ -399,6 +401,19 @@ struct ProxyBarCoreTests {
         expectEqual(VPNStatus.parseScutilNCList(output), .connected(name: "Work VPN"))
     }
 
+    private static func testRequestActivityTimelineBucketsRequestsByMinute() {
+        let timeline = RequestActivityTimeline(bucketCount: 3, bucketDuration: 60)
+
+        timeline.record(at: Date(timeIntervalSince1970: 120))
+        timeline.record(at: Date(timeIntervalSince1970: 130))
+        timeline.record(at: Date(timeIntervalSince1970: 180))
+
+        expectEqual(timeline.counts(endingAt: Date(timeIntervalSince1970: 180)), [0, 2, 1])
+
+        timeline.reset()
+        expectEqual(timeline.counts(endingAt: Date(timeIntervalSince1970: 180)), [0, 0, 0])
+    }
+
     private static func testPACHTTPServerServesProxyPAC() async throws {
         let server = PACHTTPServer(content: "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n", port: 0)
         try server.start()
@@ -456,6 +471,24 @@ struct ProxyBarCoreTests {
         try socket.write([0x04, 0x01, 0x00])
         let response = try socket.read(maxBytes: 2)
         expectEqual(response, [])
+    }
+
+    private static func testSOCKS5ServerCountsValidConnectRequests() throws {
+        let activity = RequestActivityTimeline()
+        let server = SOCKS5Server(settings: .init(socksPort: 0, pacPort: 0, domains: [], dohServers: []), requestActivity: activity)
+        try server.start()
+        defer { server.stop() }
+
+        let socket = try TestSocket.connect(port: server.boundPort)
+        defer { socket.close() }
+
+        try socket.write([0x05, 0x01, 0x00])
+        expectEqual(try socket.read(maxBytes: 2), [0x05, 0x00])
+
+        try socket.write([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x01])
+        let response = try socket.read(maxBytes: 2)
+        expect(response.count == 2, "Expected a SOCKS5 reply, got \(response)")
+        expectEqual(activity.totalCount, 1)
     }
 
     private static func testSOCKS5ServerHandlesFragmentedRequest() throws {
