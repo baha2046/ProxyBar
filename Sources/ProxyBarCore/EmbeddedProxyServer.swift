@@ -2,6 +2,7 @@ import Foundation
 
 public final class EmbeddedProxyServer: @unchecked Sendable {
     public private(set) var settings: ProxySettings
+    public private(set) var routingMode: DomainRoutingMode
     public private(set) var boundPACPort: UInt16 = 0
     public private(set) var boundSOCKSPort: UInt16 = 0
     public let requestActivity: RequestActivityTimeline
@@ -14,10 +15,12 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
 
     public init(
         settings: ProxySettings,
+        routingMode: DomainRoutingMode = .excludeListed,
         enableWireGuardWatcher: Bool = false,
         requestActivity: RequestActivityTimeline = RequestActivityTimeline()
     ) {
         self.settings = settings
+        self.routingMode = routingMode
         self.enableWireGuardWatcher = enableWireGuardWatcher
         self.requestActivity = requestActivity
     }
@@ -38,11 +41,16 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
     }
 
     public func reload(settings newSettings: ProxySettings) throws {
+        try reload(settings: newSettings, routingMode: routingMode)
+    }
+
+    public func reload(settings newSettings: ProxySettings, routingMode newRoutingMode: DomainRoutingMode) throws {
         lock.lock()
         defer { lock.unlock() }
 
         guard pacServer != nil, socksServer != nil else {
             settings = newSettings
+            routingMode = newRoutingMode
             try startLocked(settings: newSettings)
             return
         }
@@ -53,7 +61,12 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
 
         if pacPortMatches && socksCanStayRunning {
             settings = newSettings
-            pacServer?.update(content: PACGenerator.generate(domains: newSettings.domains, socksPort: boundSOCKSPort))
+            routingMode = newRoutingMode
+            pacServer?.update(content: PACGenerator.generate(
+                domains: newSettings.domains,
+                socksPort: boundSOCKSPort,
+                routingMode: newRoutingMode
+            ))
             ProxyBarLog.lifecycle.info("Embedded proxy reloaded PAC content without restarting servers")
             return
         }
@@ -61,6 +74,7 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
         ProxyBarLog.lifecycle.info("Embedded proxy restarting for settings reload")
         stopLocked()
         settings = newSettings
+        routingMode = newRoutingMode
         try startLocked(settings: newSettings)
     }
 
@@ -76,7 +90,7 @@ public final class EmbeddedProxyServer: @unchecked Sendable {
         try socks.start()
 
         let pac = PACHTTPServer(
-            content: PACGenerator.generate(domains: settings.domains, socksPort: socks.boundPort),
+            content: PACGenerator.generate(domains: settings.domains, socksPort: socks.boundPort, routingMode: routingMode),
             port: settings.pacPort
         )
 

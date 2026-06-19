@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var vpnStatus = VPNStatus.disconnected
     private var vpnRefreshTimer: Timer?
     private var proxyNetworkScope = AppPreferences.proxyNetworkScope
+    private var domainRoutingMode = AppPreferences.domainRoutingMode
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ProxyBarDiagnostics.install()
@@ -75,7 +76,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        settingsWindowController.update(scope: proxyNetworkScope, openAtLogin: LoginItem.isEnabled)
+        settingsWindowController.update(
+            scope: proxyNetworkScope,
+            routingMode: domainRoutingMode,
+            openAtLogin: LoginItem.isEnabled
+        )
         settingsWindowController.showWindow(nil)
         settingsWindowController.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -87,7 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             proxyState = .failed(error.localizedDescription)
         }
-        settingsWindowController.update(scope: proxyNetworkScope, openAtLogin: LoginItem.isEnabled)
+        settingsWindowController.update(
+            scope: proxyNetworkScope,
+            routingMode: domainRoutingMode,
+            openAtLogin: LoginItem.isEnabled
+        )
         updateUI()
     }
 
@@ -109,6 +118,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
             try SystemActions(settings: settings, networkServices: networkServices(for: previousScope)).disableAutoProxy()
             establishRouting()
+        } catch {
+            proxyState = .failed(Self.message(for: error))
+        }
+
+        updateUI()
+    }
+
+    private func setDomainRoutingMode(_ mode: DomainRoutingMode) {
+        guard mode != domainRoutingMode else {
+            return
+        }
+
+        domainRoutingMode = mode
+        AppPreferences.domainRoutingMode = mode
+
+        guard proxyServer != nil else {
+            updateUI()
+            return
+        }
+
+        do {
+            try reloadProxyServer()
         } catch {
             proxyState = .failed(Self.message(for: error))
         }
@@ -196,6 +227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindowController.onScopeChange = { [weak self] scope in
             self?.setProxyNetworkScope(scope)
         }
+        settingsWindowController.onRoutingModeChange = { [weak self] mode in
+            self?.setDomainRoutingMode(mode)
+        }
         settingsWindowController.onToggleLogin = { [weak self] in
             self?.toggleLoginItem()
         }
@@ -210,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             requestActivity.reset()
             let server = EmbeddedProxyServer(
                 settings: settings,
+                routingMode: domainRoutingMode,
                 enableWireGuardWatcher: true,
                 requestActivity: requestActivity
             )
@@ -251,10 +286,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = CrabbyProxyConfigParser.load(from: configStore.configURL)
 
         if let proxyServer {
-            try proxyServer.reload(settings: settings)
+            try proxyServer.reload(settings: settings, routingMode: domainRoutingMode)
         } else {
             let server = EmbeddedProxyServer(
                 settings: settings,
+                routingMode: domainRoutingMode,
                 enableWireGuardWatcher: true,
                 requestActivity: requestActivity
             )

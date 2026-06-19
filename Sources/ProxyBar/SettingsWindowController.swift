@@ -4,6 +4,7 @@ import ProxyBarCore
 @MainActor
 final class SettingsWindowController: NSWindowController {
     var onScopeChange: ((ProxyNetworkScope) -> Void)?
+    var onRoutingModeChange: ((DomainRoutingMode) -> Void)?
     var onToggleLogin: (() -> Void)?
 
     private let settingsViewController = SettingsViewController()
@@ -19,6 +20,9 @@ final class SettingsWindowController: NSWindowController {
         settingsViewController.onScopeChange = { [weak self] scope in
             self?.onScopeChange?(scope)
         }
+        settingsViewController.onRoutingModeChange = { [weak self] mode in
+            self?.onRoutingModeChange?(mode)
+        }
         settingsViewController.onToggleLogin = { [weak self] in
             self?.onToggleLogin?()
         }
@@ -28,17 +32,19 @@ final class SettingsWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(scope: ProxyNetworkScope, openAtLogin: Bool) {
-        settingsViewController.update(scope: scope, openAtLogin: openAtLogin)
+    func update(scope: ProxyNetworkScope, routingMode: DomainRoutingMode, openAtLogin: Bool) {
+        settingsViewController.update(scope: scope, routingMode: routingMode, openAtLogin: openAtLogin)
     }
 }
 
 @MainActor
 private final class SettingsViewController: NSViewController {
     var onScopeChange: ((ProxyNetworkScope) -> Void)?
+    var onRoutingModeChange: ((DomainRoutingMode) -> Void)?
     var onToggleLogin: (() -> Void)?
 
     private let scopeControl = NSSegmentedControl(labels: ProxyNetworkScope.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    private let routingModeControl = NSSegmentedControl(labels: DomainRoutingMode.allCases.map(\.settingsTitle), trackingMode: .selectOne, target: nil, action: nil)
     private let loginSwitch = NSSwitch()
     private let versionLabel = NSTextField(labelWithString: AppVersionDisplay.string())
     private var isUpdating = false
@@ -47,7 +53,7 @@ private final class SettingsViewController: NSViewController {
         view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.widthAnchor.constraint(equalToConstant: 360).isActive = true
-        view.heightAnchor.constraint(equalToConstant: 220).isActive = true
+        view.heightAnchor.constraint(equalToConstant: 280).isActive = true
 
         let title = NSTextField(labelWithString: "Settings")
         title.font = .systemFont(ofSize: 20, weight: .bold)
@@ -66,6 +72,19 @@ private final class SettingsViewController: NSViewController {
         scopeStack.alignment = .leading
         scopeStack.spacing = 8
 
+        let routingModeLabel = NSTextField(labelWithString: "Exclude From VPN")
+        routingModeLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        routingModeLabel.textColor = .secondaryLabelColor
+
+        routingModeControl.target = self
+        routingModeControl.action = #selector(routingModeChanged)
+        routingModeControl.segmentStyle = .rounded
+
+        let routingModeStack = NSStackView(views: [routingModeLabel, routingModeControl])
+        routingModeStack.orientation = .vertical
+        routingModeStack.alignment = .leading
+        routingModeStack.spacing = 8
+
         let loginLabel = NSTextField(labelWithString: "Open at Login")
         loginLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         loginLabel.textColor = .labelColor
@@ -81,7 +100,7 @@ private final class SettingsViewController: NSViewController {
         versionLabel.font = .systemFont(ofSize: 12)
         versionLabel.textColor = .tertiaryLabelColor
 
-        let stack = NSStackView(views: [title, scopeStack, loginRow, versionLabel])
+        let stack = NSStackView(views: [title, scopeStack, routingModeStack, loginRow, versionLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
@@ -95,13 +114,15 @@ private final class SettingsViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: view.topAnchor),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
             scopeControl.widthAnchor.constraint(equalToConstant: 230),
+            routingModeControl.widthAnchor.constraint(equalToConstant: 230),
             loginRow.widthAnchor.constraint(equalToConstant: 312)
         ])
     }
 
-    func update(scope: ProxyNetworkScope, openAtLogin: Bool) {
+    func update(scope: ProxyNetworkScope, routingMode: DomainRoutingMode, openAtLogin: Bool) {
         isUpdating = true
         scopeControl.selectedSegment = ProxyNetworkScope.allCases.firstIndex(of: scope) ?? 0
+        routingModeControl.selectedSegment = DomainRoutingMode.allCases.firstIndex(of: routingMode) ?? 0
         loginSwitch.state = openAtLogin ? .on : .off
         isUpdating = false
     }
@@ -113,6 +134,15 @@ private final class SettingsViewController: NSViewController {
             return
         }
         onScopeChange?(ProxyNetworkScope.allCases[scopeControl.selectedSegment])
+    }
+
+    @objc private func routingModeChanged() {
+        guard !isUpdating,
+              routingModeControl.selectedSegment >= 0,
+              routingModeControl.selectedSegment < DomainRoutingMode.allCases.count else {
+            return
+        }
+        onRoutingModeChange?(DomainRoutingMode.allCases[routingModeControl.selectedSegment])
     }
 
     @objc private func toggleLogin() {

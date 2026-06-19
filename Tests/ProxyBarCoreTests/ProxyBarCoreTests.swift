@@ -16,6 +16,7 @@ struct ProxyBarCoreTests {
         try testConfigStoreCreatesMissingConfigFromSample()
         testAppVersionDisplayUsesShortVersionAndBuildNumber()
         testGeneratesPACFromSettings()
+        testGeneratesPACForOppositeRoutingMode()
         try testReplacesOnlyDomainBlock()
         try testAddsDomainsArrayToExistingProxySection()
         try testAddsProxySectionWhenMissing()
@@ -49,6 +50,7 @@ struct ProxyBarCoreTests {
         try testSOCKS5ServerCountsValidConnectRequests()
         try testSOCKS5ServerHandlesFragmentedRequest()
         try await testEmbeddedProxyServerReloadsSettings()
+        try await testEmbeddedProxyServerReloadPreservesRoutingMode()
         print("ProxyBarCoreTests passed")
     }
 
@@ -158,6 +160,19 @@ struct ProxyBarCoreTests {
 
         let direct = PACGenerator.generate(domains: [], socksPort: 1088)
         expect(!direct.contains("SOCKS5"), "Expected empty domains to render DIRECT-only PAC")
+    }
+
+    private static func testGeneratesPACForOppositeRoutingMode() {
+        let pac = PACGenerator.generate(
+            domains: ["*.example.com", "example.com"],
+            socksPort: 1088,
+            routingMode: .excludeUnlisted
+        )
+
+        expect(pac.contains(#"shExpMatch(host, "*.example.com")"#), "Expected wildcard condition")
+        expect(pac.contains(#"return "DIRECT";"#), "Expected configured domains to use VPN/direct routing")
+        expect(pac.contains(#"return "SOCKS5 127.0.0.1:1088";"#), "Expected unlisted domains to bypass VPN through SOCKS5")
+        expect(pac.range(of: #"return "DIRECT";"#)!.lowerBound < pac.range(of: #"return "SOCKS5 127.0.0.1:1088";"#)!.lowerBound, "Expected direct return before SOCKS5 fallback")
     }
 
     private static func testProxyPopoverCardsFitContentWidth() {
@@ -800,6 +815,21 @@ struct ProxyBarCoreTests {
         let secondPAC = try await fetchPAC(port: server.boundPACPort)
         expect(secondPAC.contains("two.example"), "Expected reloaded PAC content")
         expect(!secondPAC.contains("one.example"), "Expected old PAC content to be replaced")
+    }
+
+    private static func testEmbeddedProxyServerReloadPreservesRoutingMode() async throws {
+        let server = EmbeddedProxyServer(
+            settings: .init(socksPort: 0, pacPort: 0, domains: ["one.example"], dohServers: []),
+            routingMode: .excludeUnlisted
+        )
+        try server.start()
+        defer { server.stop() }
+
+        try server.reload(settings: .init(socksPort: 0, pacPort: server.boundPACPort, domains: ["two.example"], dohServers: []))
+        let pac = try await fetchPAC(port: server.boundPACPort)
+
+        expect(pac.contains("two.example"), "Expected reloaded PAC content")
+        expect(pac.range(of: #"return "DIRECT";"#)!.lowerBound < pac.range(of: #"return "SOCKS5 127.0.0.1:"#)!.lowerBound, "Expected opposite routing mode to survive reload")
     }
 
     private static func fetchPAC(port: UInt16) async throws -> String {

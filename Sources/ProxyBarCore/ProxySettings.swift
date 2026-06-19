@@ -52,6 +52,20 @@ public struct ProxySettings: Equatable, Sendable {
     )
 }
 
+public enum DomainRoutingMode: String, CaseIterable, Sendable {
+    case excludeListed
+    case excludeUnlisted
+
+    public var settingsTitle: String {
+        switch self {
+        case .excludeListed:
+            return "Listed Domains"
+        case .excludeUnlisted:
+            return "Unlisted Domains"
+        }
+    }
+}
+
 public enum CrabbyProxyConfigParser {
     public enum ParseError: Error, LocalizedError {
         case invalidPort(String)
@@ -171,9 +185,23 @@ public enum CrabbyProxyConfigParser {
 }
 
 public enum PACGenerator {
-    public static func generate(domains: [String], socksPort: UInt16) -> String {
+    public static func generate(
+        domains: [String],
+        socksPort: UInt16,
+        routingMode: DomainRoutingMode = .excludeListed
+    ) -> String {
         guard !domains.isEmpty else {
-            return "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n"
+            switch routingMode {
+            case .excludeListed:
+                return "function FindProxyForURL(url, host) {\n  return \"DIRECT\";\n}\n"
+            case .excludeUnlisted:
+                return """
+                function FindProxyForURL(url, host) {
+                  return "SOCKS5 127.0.0.1:\(socksPort)";
+                }
+
+                """
+            }
         }
 
         let last = domains.count - 1
@@ -191,11 +219,22 @@ public enum PACGenerator {
             }
         }
 
+        let matchedReturn: String
+        let fallbackReturn: String
+        switch routingMode {
+        case .excludeListed:
+            matchedReturn = "SOCKS5 127.0.0.1:\(socksPort)"
+            fallbackReturn = "DIRECT"
+        case .excludeUnlisted:
+            matchedReturn = "DIRECT"
+            fallbackReturn = "SOCKS5 127.0.0.1:\(socksPort)"
+        }
+
         return """
         function FindProxyForURL(url, host) {
         \(conditions.joined(separator: "\n"))
-            return "SOCKS5 127.0.0.1:\(socksPort)";
-          return "DIRECT";
+            return "\(matchedReturn)";
+          return "\(fallbackReturn)";
         }
 
         """
