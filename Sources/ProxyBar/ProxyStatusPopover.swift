@@ -206,19 +206,11 @@ final class ProxyStatusViewController: NSViewController {
         let settingsButton = actionButton(title: "Settings", action: #selector(openSettings))
         let quitButton = actionButton(title: "Quit", action: #selector(quit))
 
-        let top = NSStackView(views: [addButton, applyButton, configButton])
-        top.orientation = .horizontal
-        top.distribution = .fillEqually
-        top.spacing = 8
-
-        let bottom = NSStackView(views: [settingsButton, quitButton])
-        bottom.orientation = .horizontal
-        bottom.distribution = .fillEqually
-        bottom.spacing = 8
-
-        let stack = NSStackView(views: [top, bottom])
-        stack.orientation = .vertical
+        let stack = NSStackView(views: [addButton, applyButton, configButton, settingsButton, quitButton])
+        stack.orientation = .horizontal
+        stack.distribution = .fillEqually
         stack.spacing = 8
+        
         return stack
     }
 
@@ -265,7 +257,7 @@ final class ProxyStatusViewController: NSViewController {
 private final class DomainListView: NSView {
     private let titleLabel = NSTextField(labelWithString: "Configured Domains")
     private let stack = NSStackView()
-    private let scrollView = NSScrollView()
+    private let scrollView = DomainScrollView()
     private let emptyLabel = NSTextField(labelWithString: "No domains configured")
 
     override init(frame frameRect: NSRect) {
@@ -296,6 +288,9 @@ private final class DomainListView: NSView {
         scrollView.scrollerStyle = .overlay
         scrollView.verticalScrollElasticity = .allowed
         scrollView.documentView = documentView
+        scrollView.onScrollWheel = { [weak self] in
+            self?.refreshRowHover()
+        }
         NSLayoutConstraint.activate([
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
         ])
@@ -357,6 +352,13 @@ private final class DomainListView: NSView {
         needsDisplay = true
     }
 
+    private func refreshRowHover() {
+        let mouseLocation = window?.mouseLocationOutsideOfEventStream
+        for case let row as DomainRowView in stack.arrangedSubviews {
+            row.updateHover(mouseLocationInWindow: mouseLocation)
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         NSColor(calibratedWhite: 0.15, alpha: 0.68).setFill()
         let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
@@ -364,6 +366,16 @@ private final class DomainListView: NSView {
         NSColor(calibratedWhite: 1, alpha: 0.07).setStroke()
         path.lineWidth = 1
         path.stroke()
+    }
+}
+
+@MainActor
+private final class DomainScrollView: NSScrollView {
+    var onScrollWheel: (() -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+        onScrollWheel?()
     }
 }
 
@@ -377,8 +389,14 @@ private final class DomainRowView: NSView {
     private let domainLabel = NSTextField(labelWithString: "")
     private let removeButton: DomainRemoveButton
     private var trackingArea: NSTrackingArea?
-    private var isHovering = false {
-        didSet { needsDisplay = true }
+    private var hoverState = MouseHoverState() {
+        didSet {
+            guard oldValue != hoverState else {
+                return
+            }
+            needsDisplay = true
+            setRemoveTint(hoverState.isActive ? .labelColor : .secondaryLabelColor)
+        }
     }
 
     init(domain: String, target: AnyObject, action: Selector) {
@@ -451,17 +469,29 @@ private final class DomainRowView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-        setRemoveTint(.labelColor)
+        hoverState.mouseEntered()
     }
 
     override func mouseExited(with event: NSEvent) {
-        isHovering = false
-        setRemoveTint(.secondaryLabelColor)
+        hoverState.mouseExited()
+    }
+
+    func updateHover(mouseLocationInWindow: NSPoint?) {
+        guard let mouseLocationInWindow else {
+            hoverState.contentScrolled()
+            return
+        }
+
+        let localPoint = convert(mouseLocationInWindow, from: nil)
+        if bounds.contains(localPoint) {
+            hoverState.mouseEntered()
+        } else {
+            hoverState.contentScrolled()
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard isHovering else { return }
+        guard hoverState.isActive else { return }
         NSColor(calibratedWhite: 1, alpha: 0.08).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
     }

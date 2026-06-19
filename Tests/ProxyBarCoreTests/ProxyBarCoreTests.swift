@@ -30,6 +30,7 @@ struct ProxyBarCoreTests {
         try testNetworkServiceResolverIgnoresBridgeAndVPNServices()
         testProxyPopoverCardsFitContentWidth()
         testLiquidGlassRequiresMacOS26()
+        testMouseHoverStateClearsWhenContentScrolls()
         testVPNStatusParsesConnectedService()
         testVPNStatusParsesDisconnectedServices()
         testVPNStatusUsesFirstConnectedService()
@@ -165,6 +166,18 @@ struct ProxyBarCoreTests {
         expectEqual(metrics.cardsTotalWidth, 401)
         expect(metrics.cardsTotalWidth <= metrics.contentWidth, "Expected status cards to fit within popover content width")
     }
+
+
+    private static func testMouseHoverStateClearsWhenContentScrolls() {
+        var hoverState = MouseHoverState()
+
+        hoverState.mouseEntered()
+        expect(hoverState.isActive, "Expected mouse-enter to activate hover state")
+
+        hoverState.contentScrolled()
+        expect(!hoverState.isActive, "Expected scroll movement to clear stale hover state")
+    }
+
 
     private static func testReplacesOnlyDomainBlock() throws {
         let document = try ConfigDocument(text: sampleConfig)
