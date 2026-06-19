@@ -21,17 +21,22 @@ public struct SystemActions {
     public let networkServices: [String]
     public let pacURL: String
     private let commandRunner: CommandRunner
+    private let usesActiveNetworkService: Bool
 
     public var networkService: String {
-        networkServices.first ?? "Wi-Fi"
+        networkServices.first ?? "Active"
     }
 
     public init(
-        networkService: String = "Wi-Fi",
+        networkService: String? = nil,
         pacURL: String = "http://127.0.0.1:1081/proxy.pac",
         commandRunner: @escaping CommandRunner = SystemActions.runProcess
     ) {
-        self.init(networkServices: [networkService], pacURL: pacURL, commandRunner: commandRunner)
+        if let networkService {
+            self.init(networkServices: [networkService], pacURL: pacURL, commandRunner: commandRunner)
+        } else {
+            self.init(networkServices: [], pacURL: pacURL, commandRunner: commandRunner)
+        }
     }
 
     public init(
@@ -39,17 +44,22 @@ public struct SystemActions {
         pacURL: String = "http://127.0.0.1:1081/proxy.pac",
         commandRunner: @escaping CommandRunner = SystemActions.runProcess
     ) {
-        self.networkServices = networkServices.isEmpty ? ["Wi-Fi"] : networkServices
+        self.networkServices = networkServices
         self.pacURL = pacURL
         self.commandRunner = commandRunner
+        self.usesActiveNetworkService = networkServices.isEmpty
     }
 
     public init(
         settings: ProxySettings,
-        networkService: String = "Wi-Fi",
+        networkService: String? = nil,
         commandRunner: @escaping CommandRunner = SystemActions.runProcess
     ) {
-        self.init(networkService: networkService, pacURL: settings.pacURL, commandRunner: commandRunner)
+        if let networkService {
+            self.init(networkService: networkService, pacURL: settings.pacURL, commandRunner: commandRunner)
+        } else {
+            self.init(networkServices: [], pacURL: settings.pacURL, commandRunner: commandRunner)
+        }
     }
 
     public init(
@@ -69,7 +79,7 @@ public struct SystemActions {
     }
 
     public func refreshPAC() throws {
-        for service in networkServices {
+        for service in try resolvedNetworkServices() {
             try run(
                 executable: "/usr/sbin/networksetup",
                 arguments: ["-setautoproxystate", service, "off"]
@@ -86,12 +96,19 @@ public struct SystemActions {
     }
 
     public func disableAutoProxy() throws {
-        for service in networkServices {
+        for service in try resolvedNetworkServices() {
             try run(
                 executable: "/usr/sbin/networksetup",
                 arguments: ["-setautoproxystate", service, "off"]
             )
         }
+    }
+
+    private func resolvedNetworkServices() throws -> [String] {
+        guard usesActiveNetworkService else {
+            return networkServices
+        }
+        return [try NetworkServiceResolver.resolveActiveService(commandRunner: commandRunner)]
     }
 
     @discardableResult

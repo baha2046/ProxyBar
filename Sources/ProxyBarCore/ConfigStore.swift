@@ -84,7 +84,14 @@ public final class ConfigStore {
     private func loadDocument() throws -> ConfigDocument {
         try ensureConfigExists()
         let text = try String(contentsOf: configURL, encoding: .utf8)
-        return try ConfigDocument(text: text)
+        let document = try ConfigDocument(text: text)
+        guard document.needsRepair else {
+            return document
+        }
+
+        try backupAndWrite(document: document, domains: document.domains)
+        let repairedText = try String(contentsOf: configURL, encoding: .utf8)
+        return try ConfigDocument(text: repairedText)
     }
 
     private func ensureConfigExists() throws {

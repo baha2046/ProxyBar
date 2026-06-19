@@ -20,15 +20,23 @@ public struct ConfigDocument {
 
     public let text: String
     public let domains: [String]
+    public let needsRepair: Bool
 
     private let blockRange: Range<String.Index>
+    private let blockPrefix: String
+    private let blockSuffix: String
 
     public init(text: String) throws {
         self.text = text
 
         let lines = Self.lines(in: text)
         guard let proxyIndex = lines.firstIndex(where: { $0.trimmed == "[proxy]" }) else {
-            throw ParseError.missingProxySection
+            self.blockRange = text.endIndex..<text.endIndex
+            self.blockPrefix = Self.appendedProxySectionPrefix(for: text)
+            self.blockSuffix = ""
+            self.domains = []
+            self.needsRepair = true
+            return
         }
 
         let proxyEnd = lines[(proxyIndex + 1)...].firstIndex { line in
@@ -38,7 +46,13 @@ public struct ConfigDocument {
         guard let domainsStart = lines[proxyIndex..<proxyEnd].firstIndex(where: { line in
             line.trimmed.hasPrefix("domains") && line.trimmed.contains("[")
         }) else {
-            throw ParseError.missingDomainsArray
+            let insertionIndex = Self.domainsInsertionIndex(in: lines, proxyIndex: proxyIndex, proxyEnd: proxyEnd)
+            self.blockRange = insertionIndex..<insertionIndex
+            self.blockPrefix = Self.insertionPrefix(in: text, at: insertionIndex)
+            self.blockSuffix = Self.insertionSuffix(in: text, at: insertionIndex)
+            self.domains = []
+            self.needsRepair = true
+            return
         }
 
         guard let domainsEnd = lines[domainsStart..<proxyEnd].firstIndex(where: { line in
@@ -48,12 +62,15 @@ public struct ConfigDocument {
         }
 
         self.blockRange = lines[domainsStart].range.lowerBound..<lines[domainsEnd].range.upperBound
+        self.blockPrefix = ""
+        self.blockSuffix = ""
         self.domains = Self.extractDomains(from: String(text[blockRange]))
+        self.needsRepair = false
     }
 
     public func replacingDomains(_ domains: [String]) throws -> String {
         let normalized = DomainRules.dedupedAndSorted(domains)
-        let replacement = Self.renderDomains(normalized)
+        let replacement = blockPrefix + Self.renderDomains(normalized) + blockSuffix
         var updated = text
         updated.replaceSubrange(blockRange, with: replacement)
         return updated
@@ -85,6 +102,45 @@ public struct ConfigDocument {
             return "domains = [\n]"
         }
         return "domains = [\n\(rendered)\n]"
+    }
+
+    private static func appendedProxySectionPrefix(for text: String) -> String {
+        guard !text.isEmpty else {
+            return "[proxy]\n"
+        }
+        if text.hasSuffix("\n\n") {
+            return "[proxy]\n"
+        }
+        if text.hasSuffix("\n") {
+            return "\n[proxy]\n"
+        }
+        return "\n\n[proxy]\n"
+    }
+
+    private static func domainsInsertionIndex(in lines: [ConfigLine], proxyIndex: Int, proxyEnd: Int) -> String.Index {
+        var index = proxyEnd
+        while index > proxyIndex + 1 {
+            index -= 1
+            if !lines[index].trimmed.isEmpty {
+                return lines[index].range.upperBound
+            }
+        }
+        return lines[proxyIndex].range.upperBound
+    }
+
+    private static func insertionPrefix(in text: String, at index: String.Index) -> String {
+        guard index > text.startIndex else {
+            return ""
+        }
+        let previous = text.index(before: index)
+        return text[previous] == "\n" ? "" : "\n"
+    }
+
+    private static func insertionSuffix(in text: String, at index: String.Index) -> String {
+        guard index < text.endIndex else {
+            return ""
+        }
+        return text[index] == "\n" ? "" : "\n"
     }
 
     private static func lines(in text: String) -> [ConfigLine] {

@@ -17,7 +17,10 @@ struct ProxyBarCoreTests {
         testAppVersionDisplayUsesShortVersionAndBuildNumber()
         testGeneratesPACFromSettings()
         try testReplacesOnlyDomainBlock()
-        try testMissingDomainBlockReportsError()
+        try testAddsDomainsArrayToExistingProxySection()
+        try testAddsProxySectionWhenMissing()
+        try testConfigStoreRepairsMissingDomainBlock()
+        try testConfigStoreRepairsMissingProxySection()
         try testRefreshPACUsesValidNetworksetupArguments()
         try testRefreshPACSupportsMultipleNetworkServices()
         try testApplyRefreshesPACWithoutLaunchctl()
@@ -25,6 +28,10 @@ struct ProxyBarCoreTests {
         try testDisableAutoProxySupportsMultipleNetworkServices()
         testProxyNetworkScopeProvidesDisplayLabels()
         testNetworkServiceResolverParsesServices()
+        try testNetworkServiceResolverFindsActiveDefaultService()
+        try testNetworkServiceResolverIgnoresDisabledActiveDefaultService()
+        try testSystemActionsRefreshUsesActiveNetworkServiceWhenNoneProvided()
+        try testSystemActionsDefaultInitializerUsesActiveNetworkService()
         try testNetworkServiceResolverFindsUSBLAN()
         try testNetworkServiceResolverFindsThunderboltEthernet()
         try testNetworkServiceResolverIgnoresBridgeAndVPNServices()
@@ -197,12 +204,102 @@ struct ProxyBarCoreTests {
         expect(!updated.contains("reddit.com"), "Expected updated config to remove reddit.com")
     }
 
-    private static func testMissingDomainBlockReportsError() throws {
-        do {
-            _ = try ConfigDocument(text: "[proxy]\nsocks_port = 1080\n")
-            throw TestFailure("Expected missing domain block to throw")
-        } catch is ConfigDocument.ParseError {
-        }
+    private static func testAddsDomainsArrayToExistingProxySection() throws {
+        let document = try ConfigDocument(text: """
+        [proxy]
+        socks_port = 1090
+
+        [doh]
+        servers = [
+            "https://1.1.1.1/dns-query",
+        ]
+        """)
+
+        expectEqual(document.domains, [])
+
+        let updated = try document.replacingDomains(["example.com"])
+
+        expect(updated.contains("socks_port = 1090"), "Expected proxy settings to be preserved")
+        expect(updated.contains("[doh]"), "Expected unrelated sections to be preserved")
+        expect(updated.contains(#""example.com""#), "Expected repaired domains array to contain replacement domain")
+        expect(updated.range(of: "[proxy]")!.lowerBound < updated.range(of: "domains = [")!.lowerBound, "Expected domains array inside proxy section")
+        expect(updated.range(of: "domains = [")!.lowerBound < updated.range(of: "[doh]")!.lowerBound, "Expected domains array before next section")
+    }
+
+    private static func testAddsProxySectionWhenMissing() throws {
+        let document = try ConfigDocument(text: """
+        [doh]
+        servers = [
+            "https://1.1.1.1/dns-query",
+        ]
+        """)
+
+        expectEqual(document.domains, [])
+
+        let updated = try document.replacingDomains(["example.com"])
+
+        expect(updated.contains("[doh]"), "Expected existing config to be preserved")
+        expect(updated.contains("[proxy]"), "Expected missing proxy section to be added")
+        expect(updated.contains(#""example.com""#), "Expected repaired proxy section to contain replacement domain")
+    }
+
+    private static func testConfigStoreRepairsMissingDomainBlock() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("proxybar-config-store-repair-\(UUID().uuidString)", isDirectory: true)
+        let configURL = root
+            .appendingPathComponent("crabbyproxy", isDirectory: true)
+            .appendingPathComponent("config.toml")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        [proxy]
+        socks_port = 1090
+
+        [doh]
+        servers = [
+            "https://1.1.1.1/dns-query",
+        ]
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let domains = try ConfigStore(configURL: configURL).loadDomains()
+        let repaired = try String(contentsOf: configURL, encoding: .utf8)
+
+        expectEqual(domains, [])
+        expect(repaired.contains("socks_port = 1090"), "Expected repair to preserve proxy settings")
+        expect(repaired.contains("[doh]"), "Expected repair to preserve unrelated config")
+        expect(repaired.contains("domains = ["), "Expected repair to add domains array")
+    }
+
+    private static func testConfigStoreRepairsMissingProxySection() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("proxybar-config-store-repair-proxy-\(UUID().uuidString)", isDirectory: true)
+        let configURL = root
+            .appendingPathComponent("crabbyproxy", isDirectory: true)
+            .appendingPathComponent("config.toml")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        [doh]
+        servers = [
+            "https://1.1.1.1/dns-query",
+        ]
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let domains = try ConfigStore(configURL: configURL).loadDomains()
+        let repaired = try String(contentsOf: configURL, encoding: .utf8)
+
+        expectEqual(domains, [])
+        expect(repaired.contains("[doh]"), "Expected repair to preserve unrelated config")
+        expect(repaired.contains("[proxy]"), "Expected repair to add missing proxy section")
+        expect(repaired.contains("domains = ["), "Expected repair to add domains array")
     }
 
     private static func testRefreshPACUsesValidNetworksetupArguments() throws {
@@ -269,7 +366,7 @@ struct ProxyBarCoreTests {
 
     private static func testApplyRefreshesPACWithoutLaunchctl() throws {
         var commands: [RecordedCommand] = []
-        let actions = SystemActions(settings: .init(socksPort: 1080, pacPort: 1099, domains: [], dohServers: [])) { executable, arguments in
+        let actions = SystemActions(settings: .init(socksPort: 1080, pacPort: 1099, domains: [], dohServers: []), networkService: "Wi-Fi") { executable, arguments in
             commands.append(RecordedCommand(executable: executable, arguments: arguments))
             return ""
         }
@@ -351,6 +448,154 @@ struct ProxyBarCoreTests {
             NetworkServiceResolver.Service(name: "Thunderbolt Bridge", isEnabled: false),
             NetworkServiceResolver.Service(name: "Wi-Fi", isEnabled: true),
             NetworkServiceResolver.Service(name: "Surfshark. WireGuard", isEnabled: true)
+        ])
+    }
+
+    private static func testNetworkServiceResolverFindsActiveDefaultService() throws {
+        let routeOutput = """
+           route to: default
+        destination: default
+               mask: default
+            gateway: 192.168.1.1
+          interface: en7
+        """
+        let serviceOrderOutput = """
+        An asterisk (*) denotes that a network service is disabled.
+        (1) Wi-Fi
+        (Hardware Port: Wi-Fi, Device: en0)
+
+        (2) USB 10/100/1G/2.5G LAN
+        (Hardware Port: USB 10/100/1G/2.5G LAN, Device: en7)
+        """
+
+        let service = try NetworkServiceResolver.resolveActiveService(
+            defaultRouteOutput: routeOutput,
+            networkServiceOrderOutput: serviceOrderOutput
+        )
+
+        expectEqual(service, "USB 10/100/1G/2.5G LAN")
+    }
+
+    private static func testNetworkServiceResolverIgnoresDisabledActiveDefaultService() throws {
+        let routeOutput = """
+           route to: default
+        destination: default
+               mask: default
+            gateway: 192.168.1.1
+          interface: en7
+        """
+        let serviceOrderOutput = """
+        An asterisk (*) denotes that a network service is disabled.
+        (1) Wi-Fi
+        (Hardware Port: Wi-Fi, Device: en0)
+
+        (2) *USB 10/100/1G/2.5G LAN
+        (Hardware Port: USB 10/100/1G/2.5G LAN, Device: en7)
+        """
+
+        do {
+            _ = try NetworkServiceResolver.resolveActiveService(
+                defaultRouteOutput: routeOutput,
+                networkServiceOrderOutput: serviceOrderOutput
+            )
+            throw TestFailure("Expected disabled active service to throw")
+        } catch NetworkServiceResolver.ResolutionError.missingActiveService("en7") {
+        }
+    }
+
+    private static func testSystemActionsRefreshUsesActiveNetworkServiceWhenNoneProvided() throws {
+        var commands: [RecordedCommand] = []
+        let actions = SystemActions(settings: .init(socksPort: 1080, pacPort: 1099, domains: [], dohServers: [])) { executable, arguments in
+            commands.append(RecordedCommand(executable: executable, arguments: arguments))
+            switch (executable, arguments) {
+            case ("/sbin/route", ["-n", "get", "default"]):
+                return """
+                   route to: default
+                destination: default
+                       mask: default
+                    gateway: 192.168.1.1
+                  interface: en7
+                """
+            case ("/usr/sbin/networksetup", ["-listnetworkserviceorder"]):
+                return """
+                An asterisk (*) denotes that a network service is disabled.
+                (1) Wi-Fi
+                (Hardware Port: Wi-Fi, Device: en0)
+
+                (2) USB 10/100/1G/2.5G LAN
+                (Hardware Port: USB 10/100/1G/2.5G LAN, Device: en7)
+                """
+            default:
+                return ""
+            }
+        }
+
+        try actions.refreshPAC()
+
+        expectEqual(commands, [
+            RecordedCommand(
+                executable: "/sbin/route",
+                arguments: ["-n", "get", "default"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-listnetworkserviceorder"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "USB 10/100/1G/2.5G LAN", "off"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxyurl", "USB 10/100/1G/2.5G LAN", "http://127.0.0.1:1099/proxy.pac"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "USB 10/100/1G/2.5G LAN", "on"]
+            )
+        ])
+    }
+
+    private static func testSystemActionsDefaultInitializerUsesActiveNetworkService() throws {
+        var commands: [RecordedCommand] = []
+        let actions = SystemActions(pacURL: "http://127.0.0.1:1081/proxy.pac") { executable, arguments in
+            commands.append(RecordedCommand(executable: executable, arguments: arguments))
+            switch (executable, arguments) {
+            case ("/sbin/route", ["-n", "get", "default"]):
+                return "interface: en7"
+            case ("/usr/sbin/networksetup", ["-listnetworkserviceorder"]):
+                return """
+                (1) USB 10/100/1G/2.5G LAN
+                (Hardware Port: USB 10/100/1G/2.5G LAN, Device: en7)
+                """
+            default:
+                return ""
+            }
+        }
+
+        try actions.refreshPAC()
+
+        expectEqual(commands, [
+            RecordedCommand(
+                executable: "/sbin/route",
+                arguments: ["-n", "get", "default"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-listnetworkserviceorder"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "USB 10/100/1G/2.5G LAN", "off"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxyurl", "USB 10/100/1G/2.5G LAN", "http://127.0.0.1:1081/proxy.pac"]
+            ),
+            RecordedCommand(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setautoproxystate", "USB 10/100/1G/2.5G LAN", "on"]
+            )
         ])
     }
 
