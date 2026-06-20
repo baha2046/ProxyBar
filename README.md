@@ -156,13 +156,12 @@ Install ProxyBar with Homebrew:
 
 ```sh
 brew install --cask baha2046/proxybar/proxybar
-xattr -dr com.apple.quarantine /Applications/ProxyBar.app
 ```
 
 Or download `ProxyBar-1.0.2.zip` from the
 [GitHub Releases](https://github.com/baha2046/ProxyBar/releases) page, unzip it,
 and move `ProxyBar.app` to `/Applications`. Homebrew is recommended because the
-release is ad-hoc signed for personal distribution.
+cask clears the quarantine attribute after installation.
 
 ## Build
 
