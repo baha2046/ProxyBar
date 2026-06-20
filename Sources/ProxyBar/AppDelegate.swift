@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private let popoverController = ProxyStatusViewController()
     private let settingsWindowController = SettingsWindowController()
+    private let addDomainWindowController = AddDomainWindowController()
     private let requestActivity = RequestActivityTimeline()
     private var proxyServer: EmbeddedProxyServer?
     private var proxyState = ProxyUIState.off
@@ -42,27 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func addDomain() {
-        let alert = NSAlert()
-        alert.messageText = "Add Domain"
-        alert.informativeText = "Enter a domain or URL. ProxyBar will add the apex and wildcard entries when appropriate."
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        textField.placeholderString = "example.com"
-        textField.usesSingleLineMode = true
-        alert.accessoryView = textField
-
-        NSApp.activate(ignoringOtherApps: true)
-        alert.window.initialFirstResponder = textField
-        alert.window.makeFirstResponder(textField)
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            return
-        }
-
-        performChange {
-            _ = try configStore.add(input: textField.stringValue)
-        }
+        addDomainWindowController.show(parentWindow: nil)
     }
 
     @objc private func applyNow() {
@@ -207,6 +188,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         popoverController.onAddDomain = { [weak self] in
             self?.addDomain()
+        }
+
+        addDomainWindowController.onAdd = { [weak self] domain, includeWildcard in
+            self?.performChange {
+                _ = try self?.configStore.add(input: domain, addWildcard: includeWildcard)
+            }
         }
         popoverController.onApply = { [weak self] in
             self?.applyNow()

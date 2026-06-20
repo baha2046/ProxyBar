@@ -15,19 +15,23 @@ public enum DomainRules {
         }
     }
 
-    public static func entries(for input: String) throws -> [String] {
+    public static func entries(for input: String, addWildcard: Bool = true) throws -> [String] {
         let host = try normalizedHost(from: input)
 
         if isExactOnly(host) {
             return [host]
         }
 
-        let apex = host.hasPrefix("*.") ? String(host.dropFirst(2)) : host
-        return [apex, "*.\(apex)"]
+        if addWildcard {
+            let apex = host.hasPrefix("*.") ? String(host.dropFirst(2)) : host
+            return [apex, "*.\(apex)"]
+        } else {
+            return [host]
+        }
     }
 
     public static func removalEntries(for input: String) throws -> Set<String> {
-        Set(try entries(for: input))
+        Set(try entries(for: input, addWildcard: true))
     }
 
     public static func dedupedAndSorted(_ domains: [String]) -> [String] {

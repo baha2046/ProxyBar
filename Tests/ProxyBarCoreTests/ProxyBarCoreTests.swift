@@ -6,6 +6,8 @@ struct ProxyBarCoreTests {
     static func main() async throws {
         try testApexDomainExpandsToPair()
         try testWildcardDomainExpandsToPair()
+        try testApexDomainWithoutWildcard()
+        try testWildcardDomainWithoutWildcard()
         try testLocalhostRemainsExactOnly()
         try testURLInputUsesHost()
         testDedupeAndSortKeepsUniqueDomains()
@@ -63,6 +65,16 @@ struct ProxyBarCoreTests {
     private static func testWildcardDomainExpandsToPair() throws {
         let domains = try DomainRules.entries(for: "*.Example.com")
         expectEqual(domains, ["example.com", "*.example.com"])
+    }
+
+    private static func testApexDomainWithoutWildcard() throws {
+        let domains = try DomainRules.entries(for: "Example.com", addWildcard: false)
+        expectEqual(domains, ["example.com"])
+    }
+
+    private static func testWildcardDomainWithoutWildcard() throws {
+        let domains = try DomainRules.entries(for: "*.Example.com", addWildcard: false)
+        expectEqual(domains, ["*.example.com"])
     }
 
     private static func testLocalhostRemainsExactOnly() throws {

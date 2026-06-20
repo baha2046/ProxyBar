@@ -49,8 +49,8 @@ public final class ConfigStore {
     }
 
     @discardableResult
-    public func add(input: String) throws -> [String] {
-        let additions = try DomainRules.entries(for: input)
+    public func add(input: String, addWildcard: Bool = true) throws -> [String] {
+        let additions = try DomainRules.entries(for: input, addWildcard: addWildcard)
         let document = try loadDocument()
         let domains = DomainRules.dedupedAndSorted(document.domains + additions)
         try backupAndWrite(document: document, domains: domains)

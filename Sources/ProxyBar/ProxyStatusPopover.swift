@@ -215,9 +215,11 @@ final class ProxyStatusViewController: NSViewController {
     }
 
     private func actionButton(title: String, action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
-        button.bezelStyle = .rounded
+        let button = ProxyActionButton(title: title, target: self, action: action)
         button.font = .systemFont(ofSize: 12, weight: .semibold)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 30).isActive = true
         return button
     }
 
@@ -365,10 +367,10 @@ private final class DomainListView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(calibratedWhite: 0.15, alpha: 0.68).setFill()
+        NSColor.labelColor.withAlphaComponent(0.04).setFill()
         let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
         path.fill()
-        NSColor(calibratedWhite: 1, alpha: 0.07).setStroke()
+        NSColor.labelColor.withAlphaComponent(0.08).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -497,7 +499,7 @@ private final class DomainRowView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard hoverState.isActive else { return }
-        NSColor(calibratedWhite: 1, alpha: 0.08).setFill()
+        NSColor.labelColor.withAlphaComponent(0.06).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
     }
 }
@@ -520,6 +522,7 @@ private final class ProxyPanelView: NSView {
 
     private let usesLiquidGlass = ProxyBarPlatformFeatures.usesLiquidGlass()
     private var glassEffectView: NSView?
+    private var visualEffectView: CustomVisualEffectView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -531,19 +534,6 @@ private final class ProxyPanelView: NSView {
     }
 
     override var isFlipped: Bool { true }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard !usesLiquidGlass else {
-            return
-        }
-
-        //NSColor(calibratedWhite: 0.05, alpha: 0.08).setFill()
-        //bounds.fill()
-
-        glowColor.setFill()
-        let glow = NSBezierPath(ovalIn: NSRect(x: bounds.midX - 90, y: -50, width: 180, height: 130))
-        glow.fill()
-    }
 
     private func configureBackground() {
         contentView.translatesAutoresizingMaskIntoConstraints = false
@@ -573,22 +563,36 @@ private final class ProxyPanelView: NSView {
             }
         }
 
-        addSubview(contentView)
+        let vev = CustomVisualEffectView()
+        vev.material = .hudWindow
+        vev.blendingMode = .behindWindow
+        vev.state = .active
+        vev.translatesAutoresizingMaskIntoConstraints = false
+        vev.glowColor = glowColor
+
+        addSubview(vev)
+        vev.addSubview(contentView)
+        visualEffectView = vev
+
         NSLayoutConstraint.activate([
-            contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            contentView.topAnchor.constraint(equalTo: topAnchor),
-            contentView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            vev.leadingAnchor.constraint(equalTo: leadingAnchor),
+            vev.trailingAnchor.constraint(equalTo: trailingAnchor),
+            vev.topAnchor.constraint(equalTo: topAnchor),
+            vev.bottomAnchor.constraint(equalTo: bottomAnchor),
+            contentView.leadingAnchor.constraint(equalTo: vev.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: vev.trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: vev.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: vev.bottomAnchor)
         ])
     }
 
     private func updateGlassTint() {
-        guard usesLiquidGlass else {
-            return
-        }
-
-        if #available(macOS 26.0, *), let glassEffectView = glassEffectView as? NSGlassEffectView {
-            glassEffectView.tintColor = liquidGlassTint
+        if usesLiquidGlass {
+            if #available(macOS 26.0, *), let glassEffectView = glassEffectView as? NSGlassEffectView {
+                glassEffectView.tintColor = liquidGlassTint
+            }
+        } else {
+            visualEffectView?.glowColor = glowColor
         }
     }
 
@@ -598,7 +602,7 @@ private final class ProxyPanelView: NSView {
     }
 
     private var glowColor: NSColor {
-        color(for: status).withAlphaComponent(0.13)
+        color(for: status).withAlphaComponent(0.18)
     }
 }
 
@@ -608,8 +612,13 @@ private final class ProxyMarkView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
-        NSColor(calibratedWhite: 0.18, alpha: 1).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
+        NSColor.labelColor.withAlphaComponent(0.06).setFill()
+        let bgPath = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        bgPath.fill()
+        
+        NSColor.labelColor.withAlphaComponent(0.12).setStroke()
+        bgPath.lineWidth = 1
+        bgPath.stroke()
 
         NSColor.labelColor.setStroke()
         let path = NSBezierPath()
@@ -653,10 +662,10 @@ private final class RoundedBlockView: NSView {
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(calibratedWhite: 0.16, alpha: 0.92).setFill()
+        NSColor.labelColor.withAlphaComponent(0.04).setFill()
         let path = NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12)
         path.fill()
-        NSColor(calibratedWhite: 1, alpha: 0.08).setStroke()
+        NSColor.labelColor.withAlphaComponent(0.08).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -686,8 +695,11 @@ private final class ActivityStripView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let bg = NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12)
-        NSColor(calibratedWhite: 0.14, alpha: 0.78).setFill()
+        NSColor.labelColor.withAlphaComponent(0.04).setFill()
         bg.fill()
+        NSColor.labelColor.withAlphaComponent(0.08).setStroke()
+        bg.lineWidth = 1
+        bg.stroke()
 
         let color = color(for: status)
         let gap: CGFloat = 6
@@ -766,10 +778,10 @@ private final class StatusCardView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(calibratedWhite: 0.15, alpha: 0.86).setFill()
+        NSColor.labelColor.withAlphaComponent(0.04).setFill()
         let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
         path.fill()
-        NSColor(calibratedWhite: 1, alpha: 0.08).setStroke()
+        NSColor.labelColor.withAlphaComponent(0.08).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -828,5 +840,110 @@ private func color(for state: StatusIcon.State) -> NSColor {
         return .systemOrange
     case .off, .failed:
         return .systemRed
+    }
+}
+
+@MainActor
+private final class CustomVisualEffectView: NSVisualEffectView {
+    var glowColor: NSColor = .clear {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard glowColor != .clear else { return }
+
+        let gradient = NSGradient(starting: glowColor, ending: .clear)
+        let center = NSPoint(x: bounds.midX, y: 15)
+        gradient?.draw(fromCenter: center, radius: 0, toCenter: center, radius: 120, options: .drawsAfterEndingLocation)
+    }
+}
+
+@MainActor
+final class ProxyActionButton: NSButton {
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    init(title: String, target: AnyObject?, action: Selector?) {
+        super.init(frame: .zero)
+        self.title = title
+        self.target = target
+        self.action = action
+        self.isBordered = false
+        self.wantsLayer = true
+        self.setButtonType(.momentaryPushIn)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6)
+
+        let baseColor = NSColor.labelColor
+        let bgAlpha: CGFloat
+        if isHighlighted {
+            bgAlpha = 0.15
+        } else if isHovered {
+            bgAlpha = 0.10
+        } else {
+            bgAlpha = 0.05
+        }
+        baseColor.withAlphaComponent(bgAlpha).setFill()
+        path.fill()
+
+        let borderAlpha: CGFloat = isHovered ? 0.15 : 0.08
+        baseColor.withAlphaComponent(borderAlpha).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        let textColor = isHighlighted ? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.85)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+
+        let font = self.font ?? NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        let titleSize = title.size(withAttributes: attributes)
+        let titleRect = NSRect(
+            x: 0,
+            y: (bounds.height - titleSize.height) / 2 - 1,
+            width: bounds.width,
+            height: titleSize.height
+        )
+        title.draw(in: titleRect, withAttributes: attributes)
     }
 }
