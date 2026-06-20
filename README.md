@@ -61,54 +61,18 @@ ProxyBar is base on the idea of **[crabbyproxy](https://github.com/digital-shoku
 4. macOS honors the binding even with VPN active — traffic goes direct
 5. All other traffic goes through the VPN as normal
 
-## 機能説明
+## Install
 
-### メニューバー UI
+Install ProxyBar with Homebrew:
 
-ProxyBar は macOS のメニューバーに常駐します。ポップオーバーからプロキシの
-オン/オフ、VPN 状態、SOCKS5/PAC の待ち受けポート、登録済みドメイン数、
-ドメイン一覧、エラー状態を確認できます。`Add`、`Apply`、`Config`、`Settings`、
-`Quit` の操作をここから実行できます。`Settings` では Wi-Fi/LAN の適用先と
-`Open at Login` を切り替えられます。
+```sh
+brew install --cask baha2046/proxybar/proxybar
+```
 
-### ドメイン管理
-
-`~/.config/crabbyproxy/config.toml` の `[proxy].domains` を読み書きします。
-`Add` に `example.com` または URL を入力するとホスト名を正規化し、
-`example.com` と `*.example.com` の両方を登録します。`localhost` は例外として
-完全一致のみで登録されます。削除時も apex と wildcard のペアをまとめて削除し、
-保存前に重複排除とソートを行います。設定を書き換えるたびに、同じディレクトリへ
-タイムスタンプ付きの `config.toml.*.bak` を作成します。
-
-### PAC 生成と macOS 反映
-
-設定されたドメインから PAC ファイルを生成します。対象ドメインに一致した通信は
-`SOCKS5 127.0.0.1:<socks_port>` に送られ、それ以外は `DIRECT` になります。
-VPN 接続中は `networksetup` で選択した Wi-Fi/LAN の自動プロキシ URL を
-`http://127.0.0.1:<pac_port>/proxy.pac` に設定し、有効化します。停止時または
-VPN 切断時は選択した適用先の自動プロキシを無効化します。
-LAN は `networksetup -listallnetworkservices` の実際のサービス名から検出し、
-USB LAN アダプターや Thunderbolt Ethernet も対象にします。
-
-### SOCKS5 プロキシ
-
-ローカル SOCKS5 サーバーは SOCKS5 CONNECT リクエストを処理し、IPv4 または
-ドメイン名の宛先へ TCP リレーします。ドメイン名は設定された DoH サーバーで
-A レコードを解決し、短時間キャッシュします。ハンドシェイクにはタイムアウトと
-サイズ上限があり、長時間のリレーはハンドシェイク完了後に継続できます。
-
-### VPN 連動
-
-ProxyBar は `scutil --nc list` で VPN 接続状態を監視します。VPN が接続中なら
-PAC を有効にして `Routing Enabled` になります。VPN が切断されると PAC を無効化し、
-SOCKS5/PAC のローカルサーバーは維持したまま `Standby` になります。VPN が再接続
-されると PAC を再適用して自動的にルーティングを再開します。
-
-### 診断ログ
-
-アプリのライフサイクル、PAC 配信、SOCKS5 接続、DoH 解決、リレー結果、エラーは
-macOS unified logging に `ProxyBar` サブシステムで記録されます。接続 ID、宛先、
-解決結果、転送バイト数、ソケットエラーを確認できます。
+Or download `ProxyBar-1.0.2.zip` from the
+[GitHub Releases](https://github.com/baha2046/ProxyBar/releases) page, unzip it,
+and move `ProxyBar.app` to `/Applications`. Homebrew is recommended because the
+cask clears the quarantine attribute after installation.
 
 ## Requirements
 
@@ -149,19 +113,6 @@ servers = [
 
 If the config file is missing or cannot be parsed for runtime settings,
 ProxyBar falls back to built-in crabbyproxy-style defaults.
-
-## Install
-
-Install ProxyBar with Homebrew:
-
-```sh
-brew install --cask baha2046/proxybar/proxybar
-```
-
-Or download `ProxyBar-1.0.2.zip` from the
-[GitHub Releases](https://github.com/baha2046/ProxyBar/releases) page, unzip it,
-and move `ProxyBar.app` to `/Applications`. Homebrew is recommended because the
-cask clears the quarantine attribute after installation.
 
 ## Build
 
@@ -224,6 +175,55 @@ log show --last 10m --predicate 'subsystem == "ProxyBar"' --info --debug
 If the app quits while loading a busy site, check the latest `socks5` entries
 first. They include the SOCKS5 connection ID, destination host and port, DoH
 result, relay byte counts, and socket errors such as `Broken pipe`.
+
+## 機能説明
+
+### メニューバー UI
+
+ProxyBar は macOS のメニューバーに常駐します。ポップオーバーからプロキシの
+オン/オフ、VPN 状態、SOCKS5/PAC の待ち受けポート、登録済みドメイン数、
+ドメイン一覧、エラー状態を確認できます。`Add`、`Apply`、`Config`、`Settings`、
+`Quit` の操作をここから実行できます。`Settings` では Wi-Fi/LAN の適用先と
+`Open at Login` を切り替えられます。
+
+### ドメイン管理
+
+`~/.config/crabbyproxy/config.toml` の `[proxy].domains` を読み書きします。
+`Add` に `example.com` または URL を入力するとホスト名を正規化し、
+`example.com` と `*.example.com` の両方を登録します。`localhost` は例外として
+完全一致のみで登録されます。削除時も apex と wildcard のペアをまとめて削除し、
+保存前に重複排除とソートを行います。設定を書き換えるたびに、同じディレクトリへ
+タイムスタンプ付きの `config.toml.*.bak` を作成します。
+
+### PAC 生成と macOS 反映
+
+設定されたドメインから PAC ファイルを生成します。対象ドメインに一致した通信は
+`SOCKS5 127.0.0.1:<socks_port>` に送られ、それ以外は `DIRECT` になります。
+VPN 接続中は `networksetup` で選択した Wi-Fi/LAN の自動プロキシ URL を
+`http://127.0.0.1:<pac_port>/proxy.pac` に設定し、有効化します。停止時または
+VPN 切断時は選択した適用先の自動プロキシを無効化します。
+LAN は `networksetup -listallnetworkservices` の実際のサービス名から検出し、
+USB LAN アダプターや Thunderbolt Ethernet も対象にします。
+
+### SOCKS5 プロキシ
+
+ローカル SOCKS5 サーバーは SOCKS5 CONNECT リクエストを処理し、IPv4 または
+ドメイン名の宛先へ TCP リレーします。ドメイン名は設定された DoH サーバーで
+A レコードを解決し、短時間キャッシュします。ハンドシェイクにはタイムアウトと
+サイズ上限があり、長時間のリレーはハンドシェイク完了後に継続できます。
+
+### VPN 連動
+
+ProxyBar は `scutil --nc list` で VPN 接続状態を監視します。VPN が接続中なら
+PAC を有効にして `Routing Enabled` になります。VPN が切断されると PAC を無効化し、
+SOCKS5/PAC のローカルサーバーは維持したまま `Standby` になります。VPN が再接続
+されると PAC を再適用して自動的にルーティングを再開します。
+
+### 診断ログ
+
+アプリのライフサイクル、PAC 配信、SOCKS5 接続、DoH 解決、リレー結果、エラーは
+macOS unified logging に `ProxyBar` サブシステムで記録されます。接続 ID、宛先、
+解決結果、転送バイト数、ソケットエラーを確認できます。
 
 ## License
 
