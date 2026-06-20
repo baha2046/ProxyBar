@@ -259,6 +259,7 @@ private final class DomainListView: NSView {
     private let stack = NSStackView()
     private let scrollView = DomainScrollView()
     private let emptyLabel = NSTextField(labelWithString: "No domains configured")
+    private var updateState = DomainListUpdateState()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -326,6 +327,10 @@ private final class DomainListView: NSView {
     override var isFlipped: Bool { true }
 
     func update(domains: [String], target: AnyObject, action: Selector) {
+        guard updateState.shouldRender(domains: domains) else {
+            return
+        }
+
         for view in stack.arrangedSubviews {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()

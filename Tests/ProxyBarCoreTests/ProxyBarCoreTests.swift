@@ -39,6 +39,7 @@ struct ProxyBarCoreTests {
         testProxyPopoverCardsFitContentWidth()
         testLiquidGlassRequiresMacOS26()
         testMouseHoverStateClearsWhenContentScrolls()
+        testDomainListUpdateStateSkipsUnchangedDomains()
         testVPNStatusParsesConnectedService()
         testVPNStatusParsesDisconnectedServices()
         testVPNStatusUsesFirstConnectedService()
@@ -198,6 +199,14 @@ struct ProxyBarCoreTests {
 
         hoverState.contentScrolled()
         expect(!hoverState.isActive, "Expected scroll movement to clear stale hover state")
+    }
+
+    private static func testDomainListUpdateStateSkipsUnchangedDomains() {
+        var updateState = DomainListUpdateState()
+
+        expect(updateState.shouldRender(domains: ["example.com", "*.example.com"]), "Expected first domain update to render")
+        expect(!updateState.shouldRender(domains: ["example.com", "*.example.com"]), "Expected unchanged domains to skip rendering")
+        expect(updateState.shouldRender(domains: ["example.com", "*.example.com", "localhost"]), "Expected changed domains to render")
     }
 
 
