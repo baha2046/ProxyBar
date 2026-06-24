@@ -6,6 +6,7 @@ final class SettingsWindowController: NSWindowController {
     var onScopeChange: ((ProxyNetworkScope) -> Void)?
     var onRoutingModeChange: ((DomainRoutingMode) -> Void)?
     var onToggleLogin: (() -> Void)?
+    var onCheckForUpdates: (() -> Void)?
 
     private let settingsViewController = SettingsViewController()
 
@@ -26,6 +27,9 @@ final class SettingsWindowController: NSWindowController {
         settingsViewController.onToggleLogin = { [weak self] in
             self?.onToggleLogin?()
         }
+        settingsViewController.onCheckForUpdates = { [weak self] in
+            self?.onCheckForUpdates?()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -42,11 +46,17 @@ private final class SettingsViewController: NSViewController {
     var onScopeChange: ((ProxyNetworkScope) -> Void)?
     var onRoutingModeChange: ((DomainRoutingMode) -> Void)?
     var onToggleLogin: (() -> Void)?
+    var onCheckForUpdates: (() -> Void)?
 
     private let scopeControl = NSSegmentedControl(labels: ProxyNetworkScope.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let routingModeControl = NSSegmentedControl(labels: DomainRoutingMode.allCases.map(\.settingsTitle), trackingMode: .selectOne, target: nil, action: nil)
     private let loginSwitch = NSSwitch()
     private let versionLabel = NSTextField(labelWithString: AppVersionDisplay.string())
+    private lazy var checkForUpdatesButton = NSButton(
+        title: "Check for Updates…",
+        target: self,
+        action: #selector(checkForUpdates)
+    )
     private var isUpdating = false
 
     override func loadView() {
@@ -100,7 +110,15 @@ private final class SettingsViewController: NSViewController {
         versionLabel.font = .systemFont(ofSize: 12)
         versionLabel.textColor = .tertiaryLabelColor
 
-        let stack = NSStackView(views: [title, scopeStack, routingModeStack, loginRow, versionLabel])
+        checkForUpdatesButton.bezelStyle = .rounded
+        checkForUpdatesButton.controlSize = .small
+
+        let versionRow = NSStackView(views: [versionLabel, NSView(), checkForUpdatesButton])
+        versionRow.orientation = .horizontal
+        versionRow.alignment = .centerY
+        versionRow.spacing = 12
+
+        let stack = NSStackView(views: [title, scopeStack, routingModeStack, loginRow, versionRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
@@ -115,7 +133,8 @@ private final class SettingsViewController: NSViewController {
             stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
             scopeControl.widthAnchor.constraint(equalToConstant: 230),
             routingModeControl.widthAnchor.constraint(equalToConstant: 230),
-            loginRow.widthAnchor.constraint(equalToConstant: 312)
+            loginRow.widthAnchor.constraint(equalToConstant: 312),
+            versionRow.widthAnchor.constraint(equalToConstant: 312)
         ])
     }
 
@@ -150,5 +169,9 @@ private final class SettingsViewController: NSViewController {
             return
         }
         onToggleLogin?()
+    }
+
+    @objc private func checkForUpdates() {
+        onCheckForUpdates?()
     }
 }

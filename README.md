@@ -195,8 +195,8 @@ Open `.build/ProxyBar.app`. It appears in the macOS menu bar as `ProxyBar`.
 - Use the remove button next to a domain to delete it.
 - Use `Apply` to rewrite, reload, and reapply the current domain rules.
 - Use `Config` to open `config.toml`.
-- Use the application menu's `Check for Updates…` command for an immediate
-  Sparkle update check.
+- Use the `Check for Updates…` button beside the version number in the Settings
+  window for an immediate Sparkle update check.
 - Turn ProxyBar off or quit the app to disable automatic proxy settings.
 
 ProxyBar is intentionally unsandboxed because it needs to edit your home config

@@ -180,20 +180,30 @@ test_package_declares_sparkle() {
 }
 
 test_app_wires_standard_updater() {
-    grep -F 'import Sparkle' "$ROOT_DIR/Sources/ProxyBar/AppDelegate.swift" >/dev/null ||
-        fail "AppDelegate must import Sparkle"
     grep -F 'SPUStandardUpdaterController' "$ROOT_DIR/Sources/ProxyBar/AppDelegate.swift" >/dev/null ||
         fail "AppDelegate must own a standard Sparkle updater controller"
-    grep -F 'Check for Updates…' "$ROOT_DIR/Sources/ProxyBar/ApplicationMenu.swift" >/dev/null ||
-        fail "application menu must expose a manual update command"
-    grep -F '#selector(SPUStandardUpdaterController.checkForUpdates(_:))' \
-        "$ROOT_DIR/Sources/ProxyBar/ApplicationMenu.swift" >/dev/null ||
-        fail "manual update command must call Sparkle"
+    grep -F 'onCheckForUpdates' "$ROOT_DIR/Sources/ProxyBar/AppDelegate.swift" >/dev/null ||
+        fail "AppDelegate must connect the Settings update callback"
+    grep -F 'updaterController.checkForUpdates(nil)' \
+        "$ROOT_DIR/Sources/ProxyBar/AppDelegate.swift" >/dev/null ||
+        fail "Settings callback must invoke Sparkle"
+    grep -F 'Check for Updates…' "$ROOT_DIR/Sources/ProxyBar/SettingsWindowController.swift" >/dev/null ||
+        fail "Settings must expose a manual update button"
+    grep -F 'onCheckForUpdates' "$ROOT_DIR/Sources/ProxyBar/SettingsWindowController.swift" >/dev/null ||
+        fail "Settings must forward the update callback"
+    if grep -F 'Check for Updates…' "$ROOT_DIR/Sources/ProxyBar/ApplicationMenu.swift" >/dev/null; then
+        fail "application menu must not expose the update command"
+    fi
 }
 
 test_readme_documents_sparkle_release() {
     grep -F 'Check for Updates…' "$ROOT_DIR/README.md" >/dev/null ||
         fail "README must document manual update checks"
+    grep -F 'in the Settings' "$ROOT_DIR/README.md" >/dev/null ||
+        fail "README must locate the update command in Settings"
+    if grep -F "application menu's \`Check for Updates…\`" "$ROOT_DIR/README.md" >/dev/null; then
+        fail "README must not locate the update command in the application menu"
+    fi
     grep -F 'SPARKLE_PUBLIC_ED_KEY' "$ROOT_DIR/README.md" >/dev/null ||
         fail "README must document the Sparkle public key"
     grep -F 'generate_keys' "$ROOT_DIR/README.md" >/dev/null ||
