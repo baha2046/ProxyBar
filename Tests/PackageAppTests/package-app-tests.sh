@@ -113,6 +113,18 @@ test_package_declares_sparkle() {
         fail "ProxyBar target must link the Sparkle product"
 }
 
+test_app_wires_standard_updater() {
+    grep -F 'import Sparkle' "$ROOT_DIR/Sources/ProxyBar/AppDelegate.swift" >/dev/null ||
+        fail "AppDelegate must import Sparkle"
+    grep -F 'SPUStandardUpdaterController' "$ROOT_DIR/Sources/ProxyBar/AppDelegate.swift" >/dev/null ||
+        fail "AppDelegate must own a standard Sparkle updater controller"
+    grep -F 'Check for Updates…' "$ROOT_DIR/Sources/ProxyBar/ApplicationMenu.swift" >/dev/null ||
+        fail "application menu must expose a manual update command"
+    grep -F '#selector(SPUStandardUpdaterController.checkForUpdates(_:))' \
+        "$ROOT_DIR/Sources/ProxyBar/ApplicationMenu.swift" >/dev/null ||
+        fail "manual update command must call Sparkle"
+}
+
 test_default_identity_and_notarization_flow() {
     local fixture_dir
     fixture_dir="$(create_fixture default-flow)"
@@ -179,6 +191,7 @@ test_missing_identity_stops_before_final_archive() {
 }
 
 test_package_declares_sparkle
+test_app_wires_standard_updater
 test_default_identity_and_notarization_flow
 test_signing_identity_override_bypasses_discovery
 test_missing_identity_stops_before_final_archive

@@ -1,12 +1,21 @@
 import AppKit
+import Sparkle
 
 @MainActor
 enum ApplicationMenu {
-    static func install() {
+    static func install(updaterController: SPUStandardUpdaterController) {
         let mainMenu = NSMenu()
 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
+        let checkForUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdatesItem.target = updaterController
+        appMenu.addItem(checkForUpdatesItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit ProxyBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)

@@ -1,8 +1,14 @@
 import AppKit
 import ProxyBarCore
+import Sparkle
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let configStore = ConfigStore()
     private let popover = NSPopover()
@@ -21,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProxyBarDiagnostics.install()
         ProxyBarLog.lifecycle.info("ProxyBar application did finish launching")
         NSApp.setActivationPolicy(.accessory)
-        ApplicationMenu.install()
+        ApplicationMenu.install(updaterController: updaterController)
         configurePopover()
         statusItem.button?.image = StatusIcon.make(state: .working)
         statusItem.button?.toolTip = "ProxyBar"
