@@ -42,6 +42,8 @@ struct ProxyBarCoreTests {
         testLiquidGlassRequiresMacOS26()
         testMouseHoverStateClearsWhenContentScrolls()
         testDomainListUpdateStateSkipsUnchangedDomains()
+        testDomainListUpdateStateRendersAfterSkippedRefresh()
+        testAddDomainPresentationUsesActivePopoverWindow()
         testVPNStatusParsesConnectedService()
         testVPNStatusParsesDisconnectedServices()
         testVPNStatusUsesFirstConnectedService()
@@ -219,6 +221,29 @@ struct ProxyBarCoreTests {
         expect(updateState.shouldRender(domains: ["example.com", "*.example.com"]), "Expected first domain update to render")
         expect(!updateState.shouldRender(domains: ["example.com", "*.example.com"]), "Expected unchanged domains to skip rendering")
         expect(updateState.shouldRender(domains: ["example.com", "*.example.com", "localhost"]), "Expected changed domains to render")
+    }
+
+    private static func testDomainListUpdateStateRendersAfterSkippedRefresh() {
+        var updateState = DomainListUpdateState()
+
+        expect(updateState.shouldRender(domains: ["example.com"]), "Expected initial domain list to render")
+        expect(!updateState.shouldRender(domains: ["example.com"]), "Expected cancel/no-op refresh to skip rendering")
+        expect(updateState.shouldRender(domains: ["example.com", "*.example.com"]), "Expected later add to render after skipped refresh")
+    }
+
+    private static func testAddDomainPresentationUsesActivePopoverWindow() {
+        expectEqual(
+            AddDomainPresentationDecision.mode(popoverIsShown: true, hasPopoverWindow: true),
+            .sheet
+        )
+        expectEqual(
+            AddDomainPresentationDecision.mode(popoverIsShown: true, hasPopoverWindow: false),
+            .standalone
+        )
+        expectEqual(
+            AddDomainPresentationDecision.mode(popoverIsShown: false, hasPopoverWindow: true),
+            .standalone
+        )
     }
 
 

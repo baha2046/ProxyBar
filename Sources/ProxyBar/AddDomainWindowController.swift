@@ -6,6 +6,9 @@ final class AddDomainWindowController: NSWindowController {
     var onAdd: ((String, Bool) -> Void)?
 
     private let addDomainViewController = AddDomainViewController()
+    private weak var sheetParentWindow: NSWindow?
+    private var onDismiss: (() -> Void)?
+    private var isFinishing = false
 
     init() {
         let window = NSWindow(contentViewController: addDomainViewController)
@@ -14,14 +17,15 @@ final class AddDomainWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
+        window.delegate = self
 
         addDomainViewController.onCancel = { [weak self] in
-            self?.close()
+            self?.finish()
         }
 
         addDomainViewController.onAdd = { [weak self] domain, includeWildcard in
             self?.onAdd?(domain, includeWildcard)
-            self?.close()
+            self?.finish()
         }
     }
 
@@ -29,15 +33,69 @@ final class AddDomainWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func show(parentWindow: NSWindow?) {
+    func show(parentWindow: NSWindow?, onDismiss: (() -> Void)? = nil) {
         addDomainViewController.reset()
+        self.onDismiss = onDismiss
+
+        guard let window else {
+            finish()
+            return
+        }
+
+        if window.isVisible {
+            window.makeKey()
+            addDomainViewController.focusTextField()
+            return
+        }
+
         if let parentWindow {
-            parentWindow.beginSheet(window!)
+            sheetParentWindow = parentWindow
+            parentWindow.makeKey()
+            parentWindow.beginSheet(window)
+            addDomainViewController.focusTextField()
         } else {
             showWindow(nil)
-            window?.makeKeyAndOrderFront(nil)
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            addDomainViewController.focusTextField()
         }
+    }
+
+    private func finish() {
+        guard !isFinishing else {
+            return
+        }
+        isFinishing = true
+
+        guard let window else {
+            onDismiss?()
+            onDismiss = nil
+            isFinishing = false
+            return
+        }
+
+        if let parentWindow = sheetParentWindow {
+            sheetParentWindow = nil
+            parentWindow.endSheet(window)
+            parentWindow.makeKey()
+        } else {
+            close()
+        }
+
+        onDismiss?()
+        onDismiss = nil
+        isFinishing = false
+    }
+}
+
+extension AddDomainWindowController: NSWindowDelegate {
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if isFinishing {
+            return true
+        }
+
+        finish()
+        return false
     }
 }
 
@@ -131,8 +189,12 @@ private final class AddDomainViewController: NSViewController {
         ])
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        focusTextField()
+    }
+
+    func focusTextField() {
         view.window?.initialFirstResponder = textField
         view.window?.makeFirstResponder(textField)
     }

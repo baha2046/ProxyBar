@@ -43,7 +43,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func addDomain() {
-        addDomainWindowController.show(parentWindow: nil)
+        let popoverWindow = popover.contentViewController?.view.window
+        let presentationMode = AddDomainPresentationDecision.mode(
+            popoverIsShown: popover.isShown,
+            hasPopoverWindow: popoverWindow != nil
+        )
+
+        switch presentationMode {
+        case .sheet:
+            addDomainWindowController.show(parentWindow: popoverWindow) { [weak self] in
+                self?.restorePopoverFocus()
+            }
+        case .standalone:
+            addDomainWindowController.show(parentWindow: nil)
+        }
     }
 
     @objc private func applyNow() {
@@ -145,6 +158,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    private func restorePopoverFocus() {
+        guard popover.isShown else {
+            return
+        }
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     private func performChange(_ change: () throws -> Void) {
