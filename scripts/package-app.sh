@@ -150,6 +150,7 @@ cp "$ZIP_PATH" "$APPCAST_INPUT_DIR/"
 
 if ! grep -F 'sparkle:edSignature=' "$APPCAST_PATH" >/dev/null; then
     echo "Generated appcast does not contain an EdDSA update signature." >&2
+    cleanup_failed_release
     exit 1
 fi
 

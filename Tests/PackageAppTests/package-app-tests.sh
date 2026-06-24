@@ -79,11 +79,19 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 mkdir -p "$(dirname "$output_path")"
-cat > "$output_path" <<'XML'
+if [[ "${MOCK_APPCAST_UNSIGNED:-0}" == "1" ]]; then
+    cat > "$output_path" <<'XML'
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+<channel><item><enclosure/></item></channel>
+</rss>
+XML
+else
+    cat > "$output_path" <<'XML'
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
 <channel><item><enclosure sparkle:edSignature="test-signature"/></item></channel>
 </rss>
 XML
+fi
 MOCK
     chmod +x "$sparkle_tools/generate_appcast"
 
@@ -242,6 +250,10 @@ test_default_identity_and_notarization_flow() {
         "--preserve-metadata=entitlements"
 
     local info_plist="$fixture_dir/.build/ProxyBar.app/Contents/Info.plist"
+    /usr/bin/plutil -lint "$info_plist" >/dev/null ||
+        fail "generated Info.plist must be valid"
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info_plist")" == "2.0.0" ]] ||
+        fail "bundle version must default to the release version"
     grep -F '<key>SUFeedURL</key>' "$info_plist" >/dev/null ||
         fail "expected Sparkle feed URL"
     grep -F 'https://github.com/baha2046/ProxyBar/releases/latest/download/appcast.xml' \
@@ -286,6 +298,20 @@ test_appcast_failure_removes_release_outputs() {
         fail "failed appcast must not remain"
 }
 
+test_unsigned_appcast_removes_release_outputs() {
+    local fixture_dir
+    fixture_dir="$(create_fixture unsigned-appcast)"
+
+    if run_packager "$fixture_dir" "MOCK_APPCAST_UNSIGNED=1" >/dev/null 2>&1; then
+        fail "expected packaging to fail when the appcast has no EdDSA signature"
+    fi
+
+    [[ ! -f "$fixture_dir/dist/ProxyBar-2.0.0.zip" ]] ||
+        fail "release zip must be removed after unsigned appcast generation"
+    [[ ! -f "$fixture_dir/dist/appcast.xml" ]] ||
+        fail "unsigned appcast must not remain"
+}
+
 test_missing_sparkle_public_key_stops_before_build() {
     local fixture_dir
     fixture_dir="$(create_fixture missing-sparkle-key)"
@@ -305,7 +331,8 @@ test_signing_identity_override_bypasses_discovery() {
 
     run_packager "$fixture_dir" \
         "SIGNING_IDENTITY=Developer ID Application: Override (OVERRIDE)" \
-        "NOTARY_PROFILE=custom-profile" >/dev/null
+        "NOTARY_PROFILE=custom-profile" \
+        "BUILD_NUMBER=42" >/dev/null
 
     local log_path="$fixture_dir/commands.log"
     assert_log_excludes "$log_path" "security find-identity"
@@ -313,6 +340,11 @@ test_signing_identity_override_bypasses_discovery() {
         "--sign Developer\\ ID\\ Application:\\ Override\\ \\(OVERRIDE\\)"
     assert_log_contains "$log_path" \
         "--keychain-profile custom-profile --wait"
+    [[ "$(
+        /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+            "$fixture_dir/.build/ProxyBar.app/Contents/Info.plist"
+    )" == "42" ]] ||
+        fail "BUILD_NUMBER must override the bundle version"
 }
 
 test_missing_identity_stops_before_final_archive() {
@@ -333,6 +365,7 @@ test_app_wires_standard_updater
 test_readme_documents_sparkle_release
 test_default_identity_and_notarization_flow
 test_appcast_failure_removes_release_outputs
+test_unsigned_appcast_removes_release_outputs
 test_missing_sparkle_public_key_stops_before_build
 test_signing_identity_override_bypasses_discovery
 test_missing_identity_stops_before_final_archive
