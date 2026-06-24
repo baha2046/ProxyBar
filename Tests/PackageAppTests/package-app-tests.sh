@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT_PATH="$ROOT_DIR/scripts/package-app.sh"
-TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/proxybar-package-tests.XXXXXX")"
+TMP_BASE="${TMPDIR:-/tmp}"
+TEST_ROOT="$(mktemp -d "${TMP_BASE%/}/proxybar-package-tests.XXXXXX")"
 
 cleanup() {
     rm -rf "$TEST_ROOT"
@@ -18,8 +19,11 @@ fail() {
 assert_log_contains() {
     local log_path="$1"
     local expected="$2"
-    grep -F -- "$expected" "$log_path" >/dev/null ||
+    if ! grep -F -- "$expected" "$log_path" >/dev/null; then
+        echo "Command log:" >&2
+        cat "$log_path" >&2
         fail "expected command log to contain: $expected"
+    fi
 }
 
 assert_log_excludes() {
@@ -40,15 +44,48 @@ create_fixture() {
 
     mkdir -p "$fixture_dir/scripts" "$mock_bin"
     local sparkle_framework="$fixture_dir/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+    local sparkle_tools="$fixture_dir/.build/artifacts/sparkle/Sparkle/bin"
     mkdir -p \
         "$sparkle_framework/Versions/B/XPCServices/Installer.xpc" \
         "$sparkle_framework/Versions/B/XPCServices/Downloader.xpc" \
-        "$sparkle_framework/Versions/B/Updater.app"
+        "$sparkle_framework/Versions/B/Updater.app" \
+        "$sparkle_tools"
     : > "$sparkle_framework/Versions/B/Sparkle"
     : > "$sparkle_framework/Versions/B/Autoupdate"
     ln -s B "$sparkle_framework/Versions/Current"
     ln -s Versions/Current/Sparkle "$sparkle_framework/Sparkle"
     ln -s Versions/Current/Resources "$sparkle_framework/Resources"
+
+    cat > "$sparkle_tools/generate_appcast" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'generate_appcast' >> "$COMMAND_LOG"
+printf ' %q' "$@" >> "$COMMAND_LOG"
+printf '\n' >> "$COMMAND_LOG"
+
+if [[ "${MOCK_APPCAST_FAILURE:-0}" == "1" ]]; then
+    exit 1
+fi
+
+output_path=""
+while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" == "-o" ]]; then
+        output_path="$2"
+        shift 2
+    else
+        shift
+    fi
+done
+
+mkdir -p "$(dirname "$output_path")"
+cat > "$output_path" <<'XML'
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+<channel><item><enclosure sparkle:edSignature="test-signature"/></item></channel>
+</rss>
+XML
+MOCK
+    chmod +x "$sparkle_tools/generate_appcast"
 
     {
         head -n 1 "$SCRIPT_PATH"
@@ -167,6 +204,12 @@ test_default_identity_and_notarization_flow() {
         "xcrun stapler staple"
     assert_log_contains "$log_path" \
         "xcrun stapler validate"
+    assert_log_contains "$log_path" \
+        "generate_appcast -o $fixture_dir/dist/appcast.xml --download-url-prefix https://github.com/baha2046/ProxyBar/releases/download/v2.0.0/"
+    [[ -f "$fixture_dir/dist/appcast.xml" ]] ||
+        fail "expected generated appcast"
+    grep -F 'sparkle:edSignature=' "$fixture_dir/dist/appcast.xml" >/dev/null ||
+        fail "expected signed appcast enclosure"
 
     local framework_sign_line
     local app_sign_line
@@ -218,6 +261,20 @@ test_default_identity_and_notarization_flow() {
         fail "expected final release zip"
 }
 
+test_appcast_failure_removes_release_outputs() {
+    local fixture_dir
+    fixture_dir="$(create_fixture appcast-failure)"
+
+    if run_packager "$fixture_dir" "MOCK_APPCAST_FAILURE=1" >/dev/null 2>&1; then
+        fail "expected packaging to fail when appcast generation fails"
+    fi
+
+    [[ ! -f "$fixture_dir/dist/ProxyBar-2.0.0.zip" ]] ||
+        fail "release zip must be removed after appcast generation failure"
+    [[ ! -f "$fixture_dir/dist/appcast.xml" ]] ||
+        fail "failed appcast must not remain"
+}
+
 test_missing_sparkle_public_key_stops_before_build() {
     local fixture_dir
     fixture_dir="$(create_fixture missing-sparkle-key)"
@@ -263,6 +320,7 @@ test_missing_identity_stops_before_final_archive() {
 test_package_declares_sparkle
 test_app_wires_standard_updater
 test_default_identity_and_notarization_flow
+test_appcast_failure_removes_release_outputs
 test_missing_sparkle_public_key_stops_before_build
 test_signing_identity_override_bypasses_discovery
 test_missing_identity_stops_before_final_archive

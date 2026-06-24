@@ -8,6 +8,7 @@ SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-develop}"
 SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
 SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://github.com/baha2046/ProxyBar/releases/latest/download/appcast.xml}"
+SPARKLE_GENERATE_APPCAST="${SPARKLE_GENERATE_APPCAST:-}"
 APP_DIR="$ROOT_DIR/.build/ProxyBar.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -16,6 +17,8 @@ FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 DIST_DIR="$ROOT_DIR/dist"
 ZIP_PATH="$DIST_DIR/ProxyBar-$VERSION.zip"
 NOTARY_ZIP_PATH="$DIST_DIR/ProxyBar-$VERSION-notary.zip"
+APPCAST_PATH="$DIST_DIR/appcast.xml"
+APPCAST_INPUT_DIR="$DIST_DIR/.sparkle-appcast"
 
 if [[ -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
     echo "SPARKLE_PUBLIC_ED_KEY is required for Sparkle updates." >&2
@@ -24,7 +27,14 @@ fi
 
 cd "$ROOT_DIR"
 rm -rf "$APP_DIR"
-rm -f "$ZIP_PATH" "$NOTARY_ZIP_PATH"
+rm -rf "$APPCAST_INPUT_DIR"
+rm -f "$ZIP_PATH" "$NOTARY_ZIP_PATH" "$APPCAST_PATH"
+
+cleanup_failed_release() {
+    rm -rf "$APPCAST_INPUT_DIR"
+    rm -f "$ZIP_PATH" "$NOTARY_ZIP_PATH" "$APPCAST_PATH"
+}
+trap cleanup_failed_release ERR
 
 if [[ -z "$SIGNING_IDENTITY" ]]; then
     if ! SIGNING_IDENTITY="$(
@@ -51,6 +61,16 @@ SPARKLE_FRAMEWORK="$(
 )"
 if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
     echo "Sparkle.framework was not found under .build/artifacts." >&2
+    exit 1
+fi
+
+if [[ -z "$SPARKLE_GENERATE_APPCAST" ]]; then
+    SPARKLE_GENERATE_APPCAST="$(
+        find "$ROOT_DIR/.build/artifacts" -path '*/bin/generate_appcast' -type f -print -quit
+    )"
+fi
+if [[ -z "$SPARKLE_GENERATE_APPCAST" || ! -x "$SPARKLE_GENERATE_APPCAST" ]]; then
+    echo "Sparkle generate_appcast tool was not found or is not executable." >&2
     exit 1
 fi
 
@@ -121,8 +141,24 @@ SPARKLE_VERSION_DIR="$FRAMEWORKS_DIR/Sparkle.framework/Versions/B"
 rm -f "$NOTARY_ZIP_PATH"
 /usr/bin/ditto -c -k --norsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 
+mkdir -p "$APPCAST_INPUT_DIR"
+cp "$ZIP_PATH" "$APPCAST_INPUT_DIR/"
+"$SPARKLE_GENERATE_APPCAST" \
+    -o "$APPCAST_PATH" \
+    --download-url-prefix "https://github.com/baha2046/ProxyBar/releases/download/v$VERSION/" \
+    "$APPCAST_INPUT_DIR"
+
+if ! grep -F 'sparkle:edSignature=' "$APPCAST_PATH" >/dev/null; then
+    echo "Generated appcast does not contain an EdDSA update signature." >&2
+    exit 1
+fi
+
+rm -rf "$APPCAST_INPUT_DIR"
+trap - ERR
+
 echo "Created $APP_DIR"
 echo "Created $ZIP_PATH"
+echo "Created $APPCAST_PATH"
 echo "Signed with identity: $SIGNING_IDENTITY"
 echo "Notarized with keychain profile: $NOTARY_PROFILE"
 echo "SHA-256:"
