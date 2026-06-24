@@ -183,6 +183,17 @@ test_app_wires_standard_updater() {
         fail "manual update command must call Sparkle"
 }
 
+test_readme_documents_sparkle_release() {
+    grep -F 'Check for Updates…' "$ROOT_DIR/README.md" >/dev/null ||
+        fail "README must document manual update checks"
+    grep -F 'SPARKLE_PUBLIC_ED_KEY' "$ROOT_DIR/README.md" >/dev/null ||
+        fail "README must document the Sparkle public key"
+    grep -F 'generate_keys' "$ROOT_DIR/README.md" >/dev/null ||
+        fail "README must document Sparkle key generation"
+    grep -F 'appcast.xml' "$ROOT_DIR/README.md" >/dev/null ||
+        fail "README must document the appcast release asset"
+}
+
 test_default_identity_and_notarization_flow() {
     local fixture_dir
     fixture_dir="$(create_fixture default-flow)"
@@ -319,6 +330,7 @@ test_missing_identity_stops_before_final_archive() {
 
 test_package_declares_sparkle
 test_app_wires_standard_updater
+test_readme_documents_sparkle_release
 test_default_identity_and_notarization_flow
 test_appcast_failure_removes_release_outputs
 test_missing_sparkle_public_key_stops_before_build

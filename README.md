@@ -47,6 +47,8 @@ If `[proxy].socks_port` or `[proxy].pac_port` are set in
 - LAN services are detected from current macOS service names, including USB LAN
   adapters and Thunderbolt Ethernet.
 - Open-at-login support through `SMAppService`.
+- Secure Sparkle updates with daily background checks, automatic downloads,
+  install-on-quit behavior, and a manual `Check for Updates…` command.
 - Diagnostic logging through macOS unified logging.
 
 ## Credits
@@ -129,30 +131,58 @@ swift build -c release --product ProxyBar
 ```
 
 Release packaging requires a valid `Developer ID Application` certificate in
-your keychain. Store your Apple notarization credentials once under the default
-profile name:
+your keychain, Apple notarization credentials, and a Sparkle EdDSA signing key.
+Store your Apple notarization credentials once under the default profile name:
 
 ```sh
 xcrun notarytool store-credentials develop
 ```
 
+Resolve the package once, then generate the Sparkle key pair:
+
+```sh
+swift package resolve
+.build/artifacts/sparkle/Sparkle/bin/generate_keys
+```
+
+`generate_keys` stores the private key in your login Keychain and prints the
+public key. Keep the private key in Keychain; never commit or place it in the
+app bundle. Export the printed public key before packaging:
+
+```sh
+export SPARKLE_PUBLIC_ED_KEY='<public key printed by generate_keys>'
+```
+
 Create the signed, notarized, and stapled app bundle and release zip:
 
 ```sh
-scripts/package-app.sh 1.0.2
+scripts/package-app.sh 1.0.3
 ```
 
 The script automatically selects the first valid Developer ID Application
 identity and submits notarization with the `develop` keychain profile. Set
 `SIGNING_IDENTITY` or `NOTARY_PROFILE` to override either default. Set
-`BUILD_NUMBER` to override the bundle build number, which defaults to `1`.
+`BUILD_NUMBER` to override the bundle build number, which defaults to the
+release version.
 
-The app bundle and release archive are written to:
+The app bundle, release archive, and EdDSA-signed Sparkle feed are written to:
 
 ```text
 .build/ProxyBar.app
-dist/ProxyBar-1.0.2.zip
+dist/ProxyBar-1.0.3.zip
+dist/appcast.xml
 ```
+
+Create the GitHub release as a draft tagged `v1.0.3`, upload both files from
+`dist`, and then publish the release. The appcast download URL is
+`https://github.com/baha2046/ProxyBar/releases/latest/download/appcast.xml`, so
+publishing only after both assets are present prevents clients from seeing an
+incomplete release.
+
+Swift Package Manager supplies Sparkle's framework and release tools under
+`.build/artifacts/sparkle/Sparkle/`. The packaging script embeds and signs the
+framework, then runs its `bin/generate_appcast` tool using the private EdDSA key
+from Keychain.
 
 ## Use
 
@@ -165,10 +195,16 @@ Open `.build/ProxyBar.app`. It appears in the macOS menu bar as `ProxyBar`.
 - Use the remove button next to a domain to delete it.
 - Use `Apply` to rewrite, reload, and reapply the current domain rules.
 - Use `Config` to open `config.toml`.
+- Use the application menu's `Check for Updates…` command for an immediate
+  Sparkle update check.
 - Turn ProxyBar off or quit the app to disable automatic proxy settings.
 
 ProxyBar is intentionally unsandboxed because it needs to edit your home config
 file, bind local loopback ports, inspect VPN state, and run `networksetup`.
+Sparkle checks for updates every 24 hours, downloads eligible updates
+automatically, and installs them when ProxyBar quits when possible. Sparkle
+shows its standard confirmation or authorization UI when user interaction is
+required.
 
 ## Troubleshooting
 
