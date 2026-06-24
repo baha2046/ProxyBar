@@ -20,6 +20,12 @@ let package = Package(
             dependencies: [
                 "ProxyBarCore",
                 .product(name: "Sparkle", package: "Sparkle")
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "@loader_path/../Frameworks"
+                ])
             ]
         ),
         .executableTarget(

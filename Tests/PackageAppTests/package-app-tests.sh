@@ -25,6 +25,9 @@ assert_log_contains() {
 assert_log_excludes() {
     local log_path="$1"
     local unexpected="$2"
+    if [[ ! -f "$log_path" ]]; then
+        return
+    fi
     if grep -F -- "$unexpected" "$log_path" >/dev/null; then
         fail "expected command log not to contain: $unexpected"
     fi
@@ -36,6 +39,17 @@ create_fixture() {
     local mock_bin="$fixture_dir/mock-bin"
 
     mkdir -p "$fixture_dir/scripts" "$mock_bin"
+    local sparkle_framework="$fixture_dir/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+    mkdir -p \
+        "$sparkle_framework/Versions/B/XPCServices/Installer.xpc" \
+        "$sparkle_framework/Versions/B/XPCServices/Downloader.xpc" \
+        "$sparkle_framework/Versions/B/Updater.app"
+    : > "$sparkle_framework/Versions/B/Sparkle"
+    : > "$sparkle_framework/Versions/B/Autoupdate"
+    ln -s B "$sparkle_framework/Versions/Current"
+    ln -s Versions/Current/Sparkle "$sparkle_framework/Sparkle"
+    ln -s Versions/Current/Resources "$sparkle_framework/Resources"
+
     {
         head -n 1 "$SCRIPT_PATH"
         tail -n +2 "$SCRIPT_PATH" |
@@ -72,9 +86,13 @@ case "$command_name" in
         fi
         ;;
     ditto)
-        output_path="${!#}"
-        mkdir -p "$(dirname "$output_path")"
-        : > "$output_path"
+        if [[ -d "${1:-}" && "${1:-}" != -* ]]; then
+            cp -R "$1" "$2"
+        else
+            output_path="${!#}"
+            mkdir -p "$(dirname "$output_path")"
+            : > "$output_path"
+        fi
         ;;
     shasum)
         echo "0000000000000000000000000000000000000000000000000000000000000000  ${!#}"
@@ -100,7 +118,8 @@ run_packager() {
         export COMMAND_LOG="$fixture_dir/commands.log"
         export PATH="$fixture_dir/mock-bin:/usr/bin:/bin"
         cd "$fixture_dir"
-        env "$@" "$fixture_dir/scripts/package-app.sh" 2.0.0
+        env "SPARKLE_PUBLIC_ED_KEY=test-public-key" "$@" \
+            "$fixture_dir/scripts/package-app.sh" 2.0.0
     )
 }
 
@@ -111,6 +130,8 @@ test_package_declares_sparkle() {
     grep -F '.product(name: "Sparkle", package: "Sparkle")' \
         "$ROOT_DIR/Package.swift" >/dev/null ||
         fail "ProxyBar target must link the Sparkle product"
+    grep -F '@loader_path/../Frameworks' "$ROOT_DIR/Package.swift" >/dev/null ||
+        fail "ProxyBar must search the app bundle Frameworks directory"
 }
 
 test_app_wires_standard_updater() {
@@ -135,7 +156,7 @@ test_default_identity_and_notarization_flow() {
     assert_log_contains "$log_path" \
         "security find-identity -v -p codesigning"
     assert_log_contains "$log_path" \
-        "codesign --force --deep --options runtime --timestamp --sign Developer\\ ID\\ Application:\\ Example\\ \\(TEAMID\\)"
+        "codesign --force --options runtime --timestamp --sign Developer\\ ID\\ Application:\\ Example\\ \\(TEAMID\\)"
     assert_log_contains "$log_path" \
         "codesign --verify --deep --strict --verbose=2"
     assert_log_contains "$log_path" \
@@ -146,6 +167,42 @@ test_default_identity_and_notarization_flow() {
         "xcrun stapler staple"
     assert_log_contains "$log_path" \
         "xcrun stapler validate"
+
+    local framework_sign_line
+    local app_sign_line
+    framework_sign_line="$(
+        grep -nF "Sparkle.framework" "$log_path" |
+            grep -vF "Versions/B/" |
+            grep -F "codesign --force" |
+            cut -d: -f1
+    )"
+    app_sign_line="$(
+        grep -nE '^codesign --force .*ProxyBar\.app$' "$log_path" |
+            cut -d: -f1
+    )"
+    [[ "$framework_sign_line" -lt "$app_sign_line" ]] ||
+        fail "Sparkle framework must be signed before the outer app"
+    assert_log_contains "$log_path" \
+        "Downloader.xpc"
+    assert_log_contains "$log_path" \
+        "--preserve-metadata=entitlements"
+
+    local info_plist="$fixture_dir/.build/ProxyBar.app/Contents/Info.plist"
+    grep -F '<key>SUFeedURL</key>' "$info_plist" >/dev/null ||
+        fail "expected Sparkle feed URL"
+    grep -F 'https://github.com/baha2046/ProxyBar/releases/latest/download/appcast.xml' \
+        "$info_plist" >/dev/null ||
+        fail "expected stable GitHub appcast URL"
+    grep -F '<key>SUPublicEDKey</key>' "$info_plist" >/dev/null ||
+        fail "expected Sparkle public key"
+    grep -F '<string>test-public-key</string>' "$info_plist" >/dev/null ||
+        fail "expected supplied Sparkle public key"
+    grep -F '<key>SUEnableAutomaticChecks</key>' "$info_plist" >/dev/null ||
+        fail "expected automatic checks"
+    grep -F '<key>SUAutomaticallyUpdate</key>' "$info_plist" >/dev/null ||
+        fail "expected automatic updates"
+    [[ -f "$fixture_dir/.build/ProxyBar.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" ]] ||
+        fail "expected embedded Sparkle framework"
 
     local validate_line
     local final_zip_line
@@ -159,6 +216,19 @@ test_default_identity_and_notarization_flow() {
 
     [[ -f "$fixture_dir/dist/ProxyBar-2.0.0.zip" ]] ||
         fail "expected final release zip"
+}
+
+test_missing_sparkle_public_key_stops_before_build() {
+    local fixture_dir
+    fixture_dir="$(create_fixture missing-sparkle-key)"
+
+    if run_packager "$fixture_dir" "SPARKLE_PUBLIC_ED_KEY=" >/dev/null 2>&1; then
+        fail "expected packaging to fail without SPARKLE_PUBLIC_ED_KEY"
+    fi
+
+    assert_log_excludes "$fixture_dir/commands.log" "swift build"
+    [[ ! -f "$fixture_dir/dist/ProxyBar-2.0.0.zip" ]] ||
+        fail "final release zip must not exist without Sparkle public key"
 }
 
 test_signing_identity_override_bypasses_discovery() {
@@ -193,6 +263,7 @@ test_missing_identity_stops_before_final_archive() {
 test_package_declares_sparkle
 test_app_wires_standard_updater
 test_default_identity_and_notarization_flow
+test_missing_sparkle_public_key_stops_before_build
 test_signing_identity_override_bypasses_discovery
 test_missing_identity_stops_before_final_archive
 

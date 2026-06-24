@@ -3,16 +3,24 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${1:-1.0.2}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-develop}"
+SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://github.com/baha2046/ProxyBar/releases/latest/download/appcast.xml}"
 APP_DIR="$ROOT_DIR/.build/ProxyBar.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 DIST_DIR="$ROOT_DIR/dist"
 ZIP_PATH="$DIST_DIR/ProxyBar-$VERSION.zip"
 NOTARY_ZIP_PATH="$DIST_DIR/ProxyBar-$VERSION-notary.zip"
+
+if [[ -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+    echo "SPARKLE_PUBLIC_ED_KEY is required for Sparkle updates." >&2
+    exit 1
+fi
 
 cd "$ROOT_DIR"
 rm -rf "$APP_DIR"
@@ -38,9 +46,18 @@ fi
 
 swift build -c release --product ProxyBar
 
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$DIST_DIR"
+SPARKLE_FRAMEWORK="$(
+    find "$ROOT_DIR/.build/artifacts" -path '*/Sparkle.framework' -type d -print -quit
+)"
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+    echo "Sparkle.framework was not found under .build/artifacts." >&2
+    exit 1
+fi
+
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR" "$DIST_DIR"
 cp "$ROOT_DIR/.build/release/ProxyBar" "$MACOS_DIR/ProxyBar"
 swift run -c release IconGenerator "$RESOURCES_DIR/AppIcon.icns"
+/usr/bin/ditto "$SPARKLE_FRAMEWORK" "$FRAMEWORKS_DIR/Sparkle.framework"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -65,11 +82,33 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>SUFeedURL</key>
+    <string>$SPARKLE_FEED_URL</string>
+    <key>SUPublicEDKey</key>
+    <string>$SPARKLE_PUBLIC_ED_KEY</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <true/>
 </dict>
 </plist>
 PLIST
 
-/usr/bin/codesign --force --deep --options runtime --timestamp \
+SPARKLE_VERSION_DIR="$FRAMEWORKS_DIR/Sparkle.framework/Versions/B"
+
+/usr/bin/codesign --force --options runtime --timestamp \
+    --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
+/usr/bin/codesign --force --options runtime --timestamp \
+    --preserve-metadata=entitlements \
+    --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
+/usr/bin/codesign --force --options runtime --timestamp \
+    --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION_DIR/Autoupdate"
+/usr/bin/codesign --force --options runtime --timestamp \
+    --sign "$SIGNING_IDENTITY" "$SPARKLE_VERSION_DIR/Updater.app"
+/usr/bin/codesign --force --options runtime --timestamp \
+    --sign "$SIGNING_IDENTITY" "$FRAMEWORKS_DIR/Sparkle.framework"
+
+/usr/bin/codesign --force --options runtime --timestamp \
     --sign "$SIGNING_IDENTITY" "$APP_DIR"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
