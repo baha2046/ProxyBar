@@ -128,11 +128,24 @@ Build the release binary:
 swift build -c release --product ProxyBar
 ```
 
-Create the app bundle and release zip:
+Release packaging requires a valid `Developer ID Application` certificate in
+your keychain. Store your Apple notarization credentials once under the default
+profile name:
+
+```sh
+xcrun notarytool store-credentials develop
+```
+
+Create the signed, notarized, and stapled app bundle and release zip:
 
 ```sh
 scripts/package-app.sh 1.0.2
 ```
+
+The script automatically selects the first valid Developer ID Application
+identity and submits notarization with the `develop` keychain profile. Set
+`SIGNING_IDENTITY` or `NOTARY_PROFILE` to override either default. Set
+`BUILD_NUMBER` to override the bundle build number, which defaults to `1`.
 
 The app bundle and release archive are written to:
 
