@@ -104,6 +104,15 @@ run_packager() {
     )
 }
 
+test_package_declares_sparkle() {
+    grep -F '.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.3")' \
+        "$ROOT_DIR/Package.swift" >/dev/null ||
+        fail "Package.swift must pin Sparkle 2.9.3"
+    grep -F '.product(name: "Sparkle", package: "Sparkle")' \
+        "$ROOT_DIR/Package.swift" >/dev/null ||
+        fail "ProxyBar target must link the Sparkle product"
+}
+
 test_default_identity_and_notarization_flow() {
     local fixture_dir
     fixture_dir="$(create_fixture default-flow)"
@@ -169,6 +178,7 @@ test_missing_identity_stops_before_final_archive() {
     assert_log_excludes "$fixture_dir/commands.log" "xcrun notarytool submit"
 }
 
+test_package_declares_sparkle
 test_default_identity_and_notarization_flow
 test_signing_identity_override_bypasses_discovery
 test_missing_identity_stops_before_final_archive

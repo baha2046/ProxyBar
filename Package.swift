@@ -10,11 +10,17 @@ let package = Package(
         .executable(name: "ProxyBar", targets: ["ProxyBar"]),
         .library(name: "ProxyBarCore", targets: ["ProxyBarCore"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.3")
+    ],
     targets: [
         .target(name: "ProxyBarCore"),
         .executableTarget(
             name: "ProxyBar",
-            dependencies: ["ProxyBarCore"]
+            dependencies: [
+                "ProxyBarCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ]
         ),
         .executableTarget(
             name: "ProxyBarCoreTests",
